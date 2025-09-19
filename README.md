@@ -1,6 +1,16 @@
+# WebRTC Video Conferenc### 👁️ Activity Detection (Awake/Asleep/Gone)
+- **MediaPipe FaceMesh integration** for real-time eye tracking
+- **Eye Aspect Ratio (EAR) calculation** to detect eye closure
+- **Presence detection** to identify when participants have left their camera
+- **Visual status indicators**: 🙂 Active, 😴 Slept, 👻 Gone, ⏳ Checking...
+- **Smart dwell time logic** to prevent false positives
+- **Works with network adaptation** - continues during audio-only mode for local user
+- **Data channel transmission** - activity status sent even in audio-only mode
+- **Audio mode indicators**: Shows "(Audio)" when status received via data transmissionication with Adaptive Network Optimization
+
 # WebRTC Video Conference Application with Adaptive Network Optimization
 
-A modern, Google Meet-style WebRTC video conferencing application with advanced network adaptation features, active speaker detection, real-time activity monitoring (awake/asleep detection), and intelligent quality management.
+A modern, Google Meet-style WebRTC video conferencing application with advanced network adaptation features, active speaker detection, real-time activity monitoring (awake/asleep detection), and intelligent quality management with data channel status transmission.
 
 ## 🎯 Key Features
 
@@ -158,6 +168,7 @@ params.encodings[0].priority = 'medium';
 const EYE_EAR_THRESHOLD = 0.30; // Higher threshold detects closures sooner
 const SLEEP_MS = 800;           // Time before marking as 'slept' 
 const WAKE_MS = 250;            // Time before marking as 'active'
+const GONE_MS = 3000;           // Time with no face before marking as 'gone'
 
 // MediaPipe FaceMesh eye landmarks
 const LEFT_EYE = [33, 160, 158, 133, 153, 144];
@@ -165,10 +176,27 @@ const RIGHT_EYE = [362, 385, 387, 263, 373, 380];
 ```
 
 ### Activity Status Logic
-- **🙂 Active**: Eyes open for > 250ms
-- **😴 Slept**: Eyes closed for > 800ms  
-- **⏳ Checking**: Initial state or transitioning
-- **Fallback**: Defaults to 'active' after 1200ms if no face detected
+- **🙂 Active**: Face detected with eyes open for > 250ms
+- **😴 Slept**: Face detected with eyes closed for > 800ms
+- **👻 Gone**: No face detected for > 3000ms (participant left camera)
+- **⏳ Checking**: Initial state or transitioning between states
+
+### Detection State Machine
+```javascript
+// Three detection states
+'face-open'   -> Active (eyes open, person present)
+'face-closed' -> Slept (eyes closed, person present)
+'no-face'     -> Gone (no person detected)
+
+// State transitions with dwell time prevent false positives
+if (detectionState === 'face-open' && timeSinceChange > WAKE_MS) {
+  status = 'active';
+} else if (detectionState === 'face-closed' && timeSinceChange > SLEEP_MS) {
+  status = 'slept';  
+} else if (detectionState === 'no-face' && timeSinceChange > GONE_MS) {
+  status = 'gone';
+}
+```
 
 ### MediaPipe Integration
 ```javascript
@@ -183,9 +211,31 @@ fm.setOptions({
 
 ### Network Mode Compatibility
 - **Normal mode**: Activity detection for all participants with video
-- **Audio-only mode**: Local user activity detection continues, remote participants paused
+- **Audio-only mode**: Local user activity detection continues, status transmitted via data channels
+- **Remote participants in audio-only**: Receive activity status via WebRTC data channels
+- **Data channel transmission**: Minimal bandwidth usage (~50 bytes per status update)
+- **Visual indicators**: Shows "(Audio)" suffix when status is transmitted rather than locally detected
 - **Camera off**: Activity detection automatically disabled
 - **Reconnection**: Activity detection restarts when video streams resume
+
+### Data Channel Implementation
+```javascript
+// Activity status transmission
+const activityChannel = pc.createDataChannel('activity', { ordered: true });
+
+// Broadcast local activity status to all peers
+broadcastActivityStatus(status) {
+  peerConnections.forEach((pc, peerId) => {
+    if (pc.activityChannel?.readyState === 'open') {
+      pc.activityChannel.send(JSON.stringify({
+        type: 'activity-status',
+        status: status,
+        timestamp: Date.now()
+      }));
+    }
+  });
+}
+```
 
 ## �📱 Responsive Grid Layouts
 
@@ -270,17 +320,155 @@ const SPEAKER_UPDATE_INTERVAL = 200; // ms
 ## 🚀 Getting Started
 
 ### Prerequisites
-- Modern web browser with WebRTC support
-- Camera and microphone access
-- Local server for development (due to WebRTC security requirements)
-- Internet connection for MediaPipe FaceMesh CDN access
+- **Modern web browser** with WebRTC support (Chrome, Firefox, Safari, Edge)
+- **Camera and microphone** access permissions
+- **HTTPS/Local server** required for WebRTC security
+- **Internet connection** for MediaPipe FaceMesh CDN access
+- **Multiple devices** recommended for testing full WebRTC functionality
 
-### Installation
-1. Clone the repository
-2. Start a local server (e.g., `npx http-server` or `python -m http.server`)
-3. Open `index.html` in your browser
-4. Grant camera/microphone permissions
-5. Click "Join Meeting" to start
+### Quick Start (Single Device Testing)
+```bash
+# Clone the repository
+git clone <your-repo-url>
+cd webrtc-demo
+
+# Start the WebSocket server
+npm install
+npm start
+
+# Server will run on http://localhost:3000
+# Open multiple browser tabs to test locally
+```
+
+### Multi-Device Setup (Recommended)
+
+#### Option 1: VS Code Port Forwarding (Easiest)
+1. **Start the server**: Run `npm start` in your VS Code terminal
+2. **Open Ports tab**: In VS Code, go to "Ports" tab (next to Terminal)
+3. **Forward port 3000**: Click "Add Port" → Enter `3000` → Set visibility to "Public"
+4. **Copy the forwarded URL**: VS Code provides a public URL (e.g., `https://xxx-3000.app.github.dev`)
+5. **Access from other devices**: Open the public URL on phones, tablets, other computers
+
+#### Option 2: ngrok (Alternative)
+```bash
+# Install ngrok (one-time setup)
+npm install -g ngrok
+
+# Start your server
+npm start
+
+# In another terminal, expose port 3000
+ngrok http 3000
+
+# Use the https:// URL provided by ngrok on other devices
+```
+
+#### Option 3: Local Network Access
+```bash
+# Start server with host binding
+node server.js --host 0.0.0.0
+
+# Find your local IP address:
+# Windows: ipconfig
+# Mac/Linux: ifconfig or ip addr
+
+# Access from other devices on same network:
+# http://YOUR_LOCAL_IP:3000 (e.g., http://192.168.1.100:3000)
+```
+
+#### 🔒 Security & Best Practices
+
+**For Development/Testing:**
+- **VS Code Port Forwarding**: Safest option, automatically handles HTTPS
+- **ngrok**: Good for external testing, provides HTTPS by default
+- **Local network**: Only use on trusted networks (home/office WiFi)
+
+**Important Security Notes:**
+- **Never expose production**: These methods are for development only
+- **Temporary access**: Stop port forwarding when done testing
+- **HTTPS required**: WebRTC requires secure context for camera/microphone
+- **Firewall awareness**: Port forwarding may bypass some security measures
+
+**Recommended Testing Flow:**
+1. **Start locally**: Test basic functionality with browser tabs
+2. **VS Code forwarding**: Test with phone/tablet on same network
+3. **External devices**: Use ngrok for testing from different networks
+4. **Production deployment**: Use proper hosting with SSL certificates
+
+### Step-by-Step Testing Guide
+
+#### 1. Initial Setup
+```bash
+# Install dependencies
+npm install
+
+# Start the WebSocket server
+npm start
+# ✅ Server should start on http://localhost:3000
+```
+
+#### 2. Single Device Test
+1. Open **two browser tabs** to `http://localhost:3000`
+2. **Grant permissions** for camera/microphone in both tabs
+3. Click **"Join Meeting"** in both tabs
+4. **Verify**: You should see yourself and the other tab participant
+5. **Test features**: Check activity detection, network stats, audio-only mode
+
+#### 3. Multi-Device Test (Real WebRTC)
+1. **Setup port forwarding** using one of the methods above
+2. **Primary device**: Open the local URL (`http://localhost:3000`)
+3. **Secondary devices**: Open the forwarded/public URL
+4. **Join meeting** from all devices
+5. **Test real scenarios**:
+   - Poor network conditions
+   - Different device types (phone, tablet, laptop)
+   - Activity detection across devices
+   - Audio-only mode when network is poor
+
+### Troubleshooting Common Issues
+
+#### ❌ "Server failed to start"
+- **Check port**: Ensure port 3000 is not in use
+- **Install dependencies**: Run `npm install`
+- **Check Node version**: Requires Node.js 14+ 
+
+#### ❌ "Camera/microphone not working"
+- **HTTPS required**: WebRTC needs secure context (HTTPS or localhost)
+- **Grant permissions**: Check browser permission settings
+- **Test hardware**: Verify camera/mic work in other apps
+
+#### ❌ "Cannot connect between devices"
+- **Firewall**: Ensure port 3000 is not blocked
+- **Network**: Devices must reach the server
+- **HTTPS for remote**: Use ngrok or VS Code forwarding for external access
+
+#### ❌ "Activity detection not working"
+- **MediaPipe loading**: Check browser console for CDN errors
+- **Face visibility**: Ensure face is well-lit and visible
+- **Camera permissions**: Activity detection requires video access
+
+### 🧪 Testing Activity Detection Features
+
+#### Multi-Device Activity Testing
+1. **Setup two devices** using port forwarding methods above
+2. **Join meeting** from both devices
+3. **Test activity states** on Device A while watching Device B:
+   - **🙂 Active**: Look directly at camera with eyes open
+   - **😴 Slept**: Close eyes for 1+ seconds
+   - **👻 Gone**: Move completely out of camera view for 3+ seconds
+   - **⏳ Checking**: Should appear briefly during transitions
+
+#### Audio-Only Mode Testing
+1. **Simulate poor network**: Use browser dev tools to throttle network
+2. **Trigger audio-only mode**: Network should automatically adapt
+3. **Verify activity transmission**: Activity status should still update with "(Audio)" suffix
+4. **Local video preservation**: Your own video should remain visible even in audio-only
+
+#### Network Adaptation Testing
+1. **Monitor stats panel**: Watch real-time network metrics in top-right
+2. **Test quality changes**: Network should adapt between HIGH/MEDIUM/LOW/AUDIO_ONLY
+3. **Verify packet loss calculation**: Should show realistic values (not 100%)
+4. **Test recovery**: Network should improve quality when conditions get better
 
 ### Development Setup
 ```bash
@@ -386,6 +574,39 @@ Enable debug logging by opening browser console (F12) to see:
 - **STUN-only**: No TURN servers reduce privacy exposure
 - **Encrypted connections**: All WebRTC traffic is encrypted
 - **Origin restrictions**: Same-origin policy enforcement
+
+## 🚀 Quick Command Reference
+
+### Essential Commands
+```bash
+# Basic setup
+npm install
+npm start
+
+# VS Code users (easiest multi-device)
+# 1. Run: npm start
+# 2. Ports tab → Add Port → 3000 → Public
+# 3. Use the provided public URL on other devices
+
+# ngrok setup
+npm install -g ngrok
+npm start
+ngrok http 3000    # In separate terminal
+
+# Local network (same WiFi only)
+# Windows: ipconfig | findstr IPv4
+# Mac/Linux: ifconfig | grep inet
+# Then use: http://YOUR_IP:3000
+```
+
+### Testing Checklist
+- [ ] Single device (browser tabs)
+- [ ] Multi-device via port forwarding
+- [ ] Camera/microphone permissions granted
+- [ ] Activity detection working (🙂😴👻)
+- [ ] Network adaptation (check stats panel)
+- [ ] Audio-only mode transmission
+- [ ] Data channel communication
 
 ---
 

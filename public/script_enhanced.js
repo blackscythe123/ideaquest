@@ -398,8 +398,6 @@ function analyzeStats(stats, peerId) {
   let inboundVideo = null;
   let inboundAudio = null;
   let candidate = null;
-  let remoteInboundVideo = null;
-  let remoteInboundAudio = null;
   
   stats.forEach(report => {
     if (report.type === 'outbound-rtp' && report.mediaType === 'video') {
@@ -410,16 +408,12 @@ function analyzeStats(stats, peerId) {
       inboundVideo = report;
     } else if (report.type === 'inbound-rtp' && report.mediaType === 'audio') {
       inboundAudio = report;
-    } else if (report.type === 'remote-inbound-rtp' && report.mediaType === 'video') {
-      remoteInboundVideo = report;
-    } else if (report.type === 'remote-inbound-rtp' && report.mediaType === 'audio') {
-      remoteInboundAudio = report;
     } else if (report.type === 'candidate-pair' && report.selected) {
       candidate = report;
     }
   });
   
-  if (!outboundVideo && !outboundAudio && !inboundVideo && !inboundAudio) return null;
+  if (!outboundVideo && !outboundAudio) return null;
   
   const now = Date.now();
   const previousStats = networkStats.get(peerId);
@@ -435,7 +429,6 @@ function analyzeStats(stats, peerId) {
     quality: 'HIGH'
   };
   
-  // Calculate video metrics
   if (outboundVideo && previousStats && previousStats.outboundVideo) {
     const timeDelta = (now - previousStats.timestamp) / 1000;
     const bytesDelta = outboundVideo.bytesSent - previousStats.outboundVideo.bytesSent;
@@ -443,16 +436,9 @@ function analyzeStats(stats, peerId) {
     
     const packetsDelta = outboundVideo.packetsSent - previousStats.outboundVideo.packetsSent;
     const packetsLostDelta = (outboundVideo.packetsLost || 0) - (previousStats.outboundVideo.packetsLost || 0);
-    
-    // Be more careful with packet loss calculation - avoid division by zero or negative values
-    if (packetsDelta > 0 && packetsLostDelta >= 0) {
-      metrics.videoPacketLoss = Math.min(100, (packetsLostDelta / packetsDelta) * 100);
-    } else {
-      metrics.videoPacketLoss = 0;
-    }
+    metrics.videoPacketLoss = packetsDelta > 0 ? (packetsLostDelta / packetsDelta) * 100 : 0;
   }
   
-  // Calculate audio metrics
   if (outboundAudio && previousStats && previousStats.outboundAudio) {
     const timeDelta = (now - previousStats.timestamp) / 1000;
     const bytesDelta = outboundAudio.bytesSent - previousStats.outboundAudio.bytesSent;
@@ -460,142 +446,39 @@ function analyzeStats(stats, peerId) {
     
     const packetsDelta = outboundAudio.packetsSent - previousStats.outboundAudio.packetsSent;
     const packetsLostDelta = (outboundAudio.packetsLost || 0) - (previousStats.outboundAudio.packetsLost || 0);
-    
-    // Be more careful with packet loss calculation
-    if (packetsDelta > 0 && packetsLostDelta >= 0) {
-      metrics.audioPacketLoss = Math.min(100, (packetsLostDelta / packetsDelta) * 100);
-    } else {
-      metrics.audioPacketLoss = 0;
-    }
+    metrics.audioPacketLoss = packetsDelta > 0 ? (packetsLostDelta / packetsDelta) * 100 : 0;
   }
   
-  // Try to get RTT from multiple sources
-  if (candidate && candidate.currentRoundTripTime) {
-    metrics.rtt = candidate.currentRoundTripTime * 1000; // Convert to ms
-  } else if (remoteInboundVideo && remoteInboundVideo.roundTripTime) {
-    metrics.rtt = remoteInboundVideo.roundTripTime * 1000;
-  } else if (remoteInboundAudio && remoteInboundAudio.roundTripTime) {
-    metrics.rtt = remoteInboundAudio.roundTripTime * 1000;
-  }
-  
-  // Try to get packet loss from multiple sources - be more careful about calculations
-  let videoPacketLossFromRemote = 0;
-  let audioPacketLossFromRemote = 0;
-  let hasRemoteInboundStats = false;
-  
-  if (remoteInboundVideo) {
-    const packetsLost = remoteInboundVideo.packetsLost || 0;
-    // Try different field names for packets received
-    const packetsReceived = remoteInboundVideo.packetsReceived || 
-                          remoteInboundVideo.packetsRecieved || // Common typo in some implementations
-                          0;
-    
-    if (packetsReceived > 0 || packetsLost > 0) {
-      const totalPackets = packetsLost + packetsReceived;
-      if (totalPackets > 0) {
-        videoPacketLossFromRemote = (packetsLost / totalPackets) * 100;
-        hasRemoteInboundStats = true;
-      }
-    }
-  }
-  
-  if (remoteInboundAudio) {
-    const packetsLost = remoteInboundAudio.packetsLost || 0;
-    const packetsReceived = remoteInboundAudio.packetsReceived || 
-                          remoteInboundAudio.packetsRecieved || 
-                          0;
-                          
-    if (packetsReceived > 0 || packetsLost > 0) {
-      const totalPackets = packetsLost + packetsReceived;
-      if (totalPackets > 0) {
-        audioPacketLossFromRemote = (packetsLost / totalPackets) * 100;
-        hasRemoteInboundStats = true;
-      }
-    }
-  }
-  
-  // Use remote stats if available, otherwise fall back to outbound stats
-  if (hasRemoteInboundStats) {
-    // Only use remote stats if they seem reasonable
-    if (videoPacketLossFromRemote < 100) {
-      metrics.videoPacketLoss = videoPacketLossFromRemote;
-    }
-    if (audioPacketLossFromRemote < 100) {
-      metrics.audioPacketLoss = audioPacketLossFromRemote;
-    }
-  }
-  
-  // Additional fallback: use inbound stats for packet loss if available
-  if ((metrics.videoPacketLoss >= 100 || metrics.audioPacketLoss >= 100) && inboundVideo) {
-    // For inbound stats, packetsLost and packetsReceived should be total counts
-    const packetsLost = inboundVideo.packetsLost || 0;
-    const packetsReceived = inboundVideo.packetsReceived || 0;
-    const totalPackets = packetsLost + packetsReceived;
-    
-    if (totalPackets > 100) { // Only use if we have a reasonable sample size
-      metrics.videoPacketLoss = (packetsLost / totalPackets) * 100;
-    }
-  }
-  
-  if ((metrics.audioPacketLoss >= 100) && inboundAudio) {
-    const packetsLost = inboundAudio.packetsLost || 0;
-    const packetsReceived = inboundAudio.packetsReceived || 0;
-    const totalPackets = packetsLost + packetsReceived;
-    
-    if (totalPackets > 100) { // Only use if we have a reasonable sample size
-      metrics.audioPacketLoss = (packetsLost / totalPackets) * 100;
-    }
-  }
-  
-  // Final safety check - cap packet loss at reasonable values
-  metrics.videoPacketLoss = Math.min(50, Math.max(0, metrics.videoPacketLoss));
-  metrics.audioPacketLoss = Math.min(50, Math.max(0, metrics.audioPacketLoss));
-  // If no remote stats available, the outbound calculation from earlier will be used
-  
-  // Debug logging for packet loss issues (temporary)
-  if (metrics.videoPacketLoss > 50 || metrics.audioPacketLoss > 50) {
-    console.log(`🐛 High packet loss detected for ${peerId}:`, {
-      videoLoss: metrics.videoPacketLoss.toFixed(1),
-      audioLoss: metrics.audioPacketLoss.toFixed(1),
-      hasRemoteStats: hasRemoteInboundStats,
-      remoteVideoStats: remoteInboundVideo ? {
-        packetsLost: remoteInboundVideo.packetsLost,
-        packetsReceived: remoteInboundVideo.packetsReceived
-      } : null,
-      outboundVideoStats: outboundVideo ? {
-        packetsSent: outboundVideo.packetsSent,
-        packetsLost: outboundVideo.packetsLost
-      } : null
-    });
+  if (candidate) {
+    metrics.rtt = candidate.currentRoundTripTime ? candidate.currentRoundTripTime * 1000 : 0;
   }
   
   if (inboundAudio) {
     metrics.jitter = inboundAudio.jitter || 0;
   }
   
-  // Determine overall network quality - be more realistic
+  // Determine overall network quality - be more conservative
   const totalBitrate = metrics.videoBitrate + metrics.audioBitrate;
   const totalPacketLoss = Math.max(metrics.videoPacketLoss, metrics.audioPacketLoss);
   
   // Don't adapt during initial connection phase (first 10 seconds)
   if (initialConnectionPhase) {
     metrics.quality = 'HIGH';
+    return metrics;
+  }
+  
+  // More conservative thresholds to prevent unnecessary quality drops
+  if (totalBitrate < BANDWIDTH_THRESHOLDS.LOW && totalPacketLoss > 8 && metrics.rtt > 500) {
+    metrics.quality = 'LOW';
+  } else if (totalBitrate < BANDWIDTH_THRESHOLDS.MEDIUM && totalPacketLoss > 5 && metrics.rtt > 300) {
+    metrics.quality = 'MEDIUM';
   } else {
-    // More realistic thresholds
-    if (totalPacketLoss > 5 || metrics.rtt > 300 || totalBitrate < BANDWIDTH_THRESHOLDS.LOW) {
-      metrics.quality = 'LOW';
-    } else if (totalPacketLoss > 2 || metrics.rtt > 150 || totalBitrate < BANDWIDTH_THRESHOLDS.MEDIUM) {
-      metrics.quality = 'MEDIUM';
-    } else {
-      metrics.quality = 'HIGH';
-    }
+    metrics.quality = 'HIGH';
   }
   
   // Store raw stats for next comparison
   metrics.outboundVideo = outboundVideo;
   metrics.outboundAudio = outboundAudio;
-  metrics.remoteInboundVideo = remoteInboundVideo;
-  metrics.remoteInboundAudio = remoteInboundAudio;
   
   return metrics;
 }
@@ -714,6 +597,8 @@ async function adjustVideoQuality(quality, sender) {
 }
 
 function updateNetworkIndicators() {
+  if (!networkQualityIndicator) return;
+  
   // Calculate overall network quality from all peers
   let worstQuality = 'HIGH';
   let totalBitrate = 0;
@@ -736,20 +621,18 @@ function updateNetworkIndicators() {
     avgRtt /= peerCount;
   }
   
-  // Update network quality indicator if it exists
-  if (networkQualityIndicator) {
-    const qualityColors = {
-      HIGH: '#28a745',    // Green
-      MEDIUM: '#ffc107',  // Yellow
-      LOW: '#dc3545',     // Red
-      OFFLINE: '#6c757d'  // Gray
-    };
-    
-    networkQualityIndicator.style.color = qualityColors[worstQuality];
-    networkQualityIndicator.textContent = `📶 ${worstQuality}`;
-  }
+  // Update network quality indicator
+  const qualityColors = {
+    HIGH: '#28a745',    // Green
+    MEDIUM: '#ffc107',  // Yellow
+    LOW: '#dc3545',     // Red
+    OFFLINE: '#6c757d'  // Gray
+  };
   
-  // Update video quality indicator if it exists
+  networkQualityIndicator.style.color = qualityColors[worstQuality];
+  networkQualityIndicator.textContent = `📶 ${worstQuality}`;
+  
+  // Update video quality indicator
   if (videoQualityIndicator) {
     const qualityText = currentVideoQuality === 'AUDIO_ONLY' ? '🎵 Audio Only' : `📹 ${currentVideoQuality}`;
     videoQualityIndicator.textContent = qualityText;
@@ -762,66 +645,30 @@ function updateNetworkIndicators() {
 
 function updateNetworkStats(totalBitrate, avgPacketLoss, avgRtt) {
   const bitrateKbps = Math.round(totalBitrate / 1000);
-  const count = participants.size;
-  
-  // Update top-left participant count to stay in sync
-  participantCount.textContent = `${count} participant${count !== 1 ? 's' : ''}`;
-  
-  // Calculate overall network quality based on actual metrics
-  let overallQuality = 'HIGH';
-  if (networkStats.size > 0) {
-    networkStats.forEach((metrics) => {
-      if (metrics.quality === 'LOW') overallQuality = 'LOW';
-      else if (metrics.quality === 'MEDIUM' && overallQuality === 'HIGH') overallQuality = 'MEDIUM';
-    });
-  }
-  
-  // Create more detailed and properly formatted network info
-  const participantCountText = `Participants: ${count}`;
-  const networkText = `Network: ${bitrateKbps > 0 ? bitrateKbps : 0} kbps`;
-  const packetLossText = `Packet Loss: ${avgPacketLoss.toFixed(1)}%`;
-  const rttText = `RTT: ${Math.round(avgRtt)}ms`;
-  const qualityText = `Quality: ${overallQuality}`;
-  const adaptiveText = `Adaptive: ${isAdaptiveMode ? 'ON' : 'OFF'}`;
-  
-  const networkInfo = [
-    participantCountText,
-    networkText,
-    packetLossText,
-    rttText,
-    qualityText,
-    adaptiveText
-  ].join('\n');
+  const networkInfo = `
+Network: ${bitrateKbps} kbps
+Packet Loss: ${avgPacketLoss.toFixed(1)}%
+RTT: ${Math.round(avgRtt)}ms
+Quality: ${currentVideoQuality}
+Adaptive: ${isAdaptiveMode ? 'ON' : 'OFF'}
+  `.trim();
   
   statsPanel.textContent = networkInfo;
 }
 
 // Update connection stats
 function updateStats() {
-  // If we have network stats, use the detailed view
-  if (networkStats.size > 0) {
-    // Network stats will be updated by updateNetworkIndicators
-    return;
-  }
+  let statsText = `Connected: ${peerConnections.size} peers\n`;
   
-  // Fallback for basic connection info when no network stats available
-  const participantCountText = `Participants: ${participants.size}`;
-  const connectionText = `Connected: ${peerConnections.size} peers`;
-  
-  let peerStates = [];
   peerConnections.forEach((pc, peerId) => {
     const state = pc.connectionState;
     const iceState = pc.iceConnectionState;
-    peerStates.push(`${peerId.substring(0, 8)}: ${state}/${iceState}`);
+    statsText += `${peerId.substring(0, 8)}: ${state}/${iceState}\n`;
   });
   
-  const statsText = [
-    participantCountText,
-    connectionText,
-    ...peerStates
-  ].join('\n');
-  
-  statsPanel.textContent = statsText;
+  if (networkStats.size === 0) {
+    statsPanel.textContent = statsText;
+  }
 }
 
 // Create peer connection for a specific participant
@@ -973,6 +820,9 @@ joinBtn.onclick = async () => {
     localParticipant.setStream(localStream);
     participants.set('local', localParticipant);
     
+    // Create network monitoring UI indicators
+    createNetworkIndicators();
+    
     // Initialize connection timing
     connectionStartTime = Date.now();
     initialConnectionPhase = true;
@@ -1015,6 +865,9 @@ leaveBtn.onclick = () => {
   // Clear active speaker data
   activeSpeaker = null;
   audioLevels.clear();
+  
+  // Remove network indicators
+  removeNetworkIndicators();
   
   // Clear network stats
   networkStats.clear();

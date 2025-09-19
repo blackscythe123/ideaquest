@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>WebRTC Video Conference - Like Google Meet</title>
+  <title>WebRTC Adaptive Network Demo - Track C</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     
@@ -40,15 +40,10 @@
       gap: 8px;
       padding: 16px;
       overflow: hidden;
+      /* Dynamic grid - columns and rows set by JavaScript */
+      grid-template-columns: 1fr;
+      grid-template-rows: 1fr;
     }
-    
-    /* Dynamic grid sizing based on participant count */
-    .grid-1 { grid-template-columns: 1fr; }
-    .grid-2 { grid-template-columns: 1fr 1fr; }
-    .grid-3 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
-    .grid-4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
-    .grid-5, .grid-6 { grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(2, 1fr); }
-    .grid-7, .grid-8, .grid-9 { grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr); }
     
     .participant-tile {
       background: #3c4043;
@@ -59,6 +54,38 @@
       display: flex;
       align-items: center;
       justify-content: center;
+      transition: all 0.3s ease;
+      border: 1px solid rgba(255,255,255,0.2);
+    }
+    
+    .participant-tile.active-speaker {
+      border: 3px solid #1a73e8;
+      box-shadow: 0 0 20px rgba(26, 115, 232, 0.5);
+      z-index: 100;
+    }
+    
+    .participant-tile.background-participant {
+      opacity: 0.85;
+    }
+    
+    /* Responsive adjustments for different layouts */
+    @media (max-width: 768px) {
+      .video-grid {
+        gap: 4px;
+        padding: 8px;
+      }
+      
+      .participant-tile {
+        min-height: 120px;
+      }
+    }
+    
+    /* Ensure proper aspect ratios for video elements */
+    .participant-video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      border-radius: 8px;
     }
     
     .participant-video {
@@ -166,13 +193,13 @@
 </head>
 <body>
   <div class="header">
-    <h1>🎥 Video Conference</h1>
+    <h1>🎥 WebRTC Adaptive Network Demo - Track C</h1>
     <div class="meeting-info">
       <span class="participant-count" id="participantCount">0 participants</span>
     </div>
   </div>
   
-  <div class="video-grid grid-1" id="videoGrid">
+  <div class="video-grid" id="videoGrid">
     <!-- Video tiles will be dynamically added here -->
   </div>
   

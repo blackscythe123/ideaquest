@@ -13,9 +13,9 @@ const peerConnections = new Map(); // Store WebRTC connections
 // Network adaptation state
 const networkStats = new Map(); // Store per-peer network statistics
 const BANDWIDTH_THRESHOLDS = {
-  LOW: 150000,    // 150 kbps - audio only (more conservative)
-  MEDIUM: 500000, // 500 kbps - low quality video (more conservative)
-  HIGH: 1000000   // 1 Mbps - high quality video (more conservative)
+  LOW: 300000,    // 300 kbps - audio only
+  MEDIUM: 800000, // 800 kbps - low quality video
+  HIGH: 1500000   // 1.5 Mbps - high quality video
 };
 
 const VIDEO_CONSTRAINTS = {
@@ -27,15 +27,6 @@ const VIDEO_CONSTRAINTS = {
 let currentVideoQuality = 'HIGH';
 let isAdaptiveMode = true;
 let networkMonitoringInterval;
-let initialConnectionPhase = true; // Give initial connections time to stabilize
-let connectionStartTime = null;
-
-// Active speaker detection state
-let activeSpeaker = null;
-let audioLevels = new Map(); // Store audio levels per participant
-let activeSpeakerInterval;
-const AUDIO_LEVEL_THRESHOLD = 0.01; // Minimum audio level to consider speaking
-const SPEAKER_UPDATE_INTERVAL = 500; // Update active speaker every 500ms
 
 // DOM elements
 const videoGrid = document.getElementById('videoGrid');
@@ -65,10 +56,6 @@ class Participant {
     this.videoElement = null;
     this.tileElement = null;
     this.name = isLocal ? 'You' : `User ${id.substring(0, 8)}`;
-    this.audioContext = null;
-    this.audioAnalyser = null;
-    this.audioLevel = 0;
-    this.isSpeaking = false;
     
     this.createTile();
   }
@@ -110,9 +97,6 @@ class Participant {
     this.stream = stream;
     this.videoElement.srcObject = stream;
     
-    // Set up audio level monitoring for this participant
-    this.setupAudioMonitoring(stream);
-    
     // Hide no-video placeholder when stream is available
     const noVideo = this.tileElement.querySelector('.no-video');
     if (stream && stream.getVideoTracks().length > 0) {
@@ -124,71 +108,7 @@ class Participant {
     }
   }
   
-  setupAudioMonitoring(stream) {
-    if (!stream || !stream.getAudioTracks().length) return;
-    
-    try {
-      // Don't monitor local audio to avoid feedback detection
-      if (this.isLocal) return;
-      
-      this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-      this.audioAnalyser = this.audioContext.createAnalyser();
-      this.audioAnalyser.fftSize = 256;
-      
-      const source = this.audioContext.createMediaStreamSource(stream);
-      source.connect(this.audioAnalyser);
-      
-      // Start monitoring audio levels
-      this.monitorAudioLevel();
-    } catch (error) {
-      console.error(`Error setting up audio monitoring for ${this.id}:`, error);
-    }
-  }
-  
-  monitorAudioLevel() {
-    if (!this.audioAnalyser) return;
-    
-    const dataArray = new Uint8Array(this.audioAnalyser.frequencyBinCount);
-    
-    const updateLevel = () => {
-      if (!this.audioAnalyser) return;
-      
-      this.audioAnalyser.getByteFrequencyData(dataArray);
-      
-      // Calculate average audio level
-      let sum = 0;
-      for (let i = 0; i < dataArray.length; i++) {
-        sum += dataArray[i];
-      }
-      const average = sum / dataArray.length;
-      this.audioLevel = average / 255; // Normalize to 0-1
-      
-      // Store in global audio levels map
-      audioLevels.set(this.id, {
-        level: this.audioLevel,
-        timestamp: Date.now()
-      });
-      
-      // Continue monitoring
-      if (this.audioContext && this.audioContext.state === 'running') {
-        requestAnimationFrame(updateLevel);
-      }
-    };
-    
-    updateLevel();
-  }
-  
   remove() {
-    // Clean up audio monitoring
-    if (this.audioContext) {
-      this.audioContext.close();
-      this.audioContext = null;
-    }
-    this.audioAnalyser = null;
-    
-    // Remove from audio levels tracking
-    audioLevels.delete(this.id);
-    
     if (this.tileElement) {
       this.tileElement.remove();
       updateGridLayout();
@@ -199,289 +119,15 @@ class Participant {
   }
 }
 
-// Update video grid layout based on participant count (Google Meet style with optimal space usage)
+// Update video grid layout based on participant count
 function updateGridLayout() {
   const count = participants.size;
-  
-  let cols, rows, layout;
-  
-  // Optimized layouts for better space utilization and symmetry
-  switch (count) {
-    case 1:
-      cols = 1; rows = 1;
-      layout = "single";
-      break;
-    case 2:
-      cols = 2; rows = 1; // Side by side (50/50)
-      layout = "side-by-side";
-      break;
-    case 3:
-      cols = 2; rows = 2; // One large (50%) + two small (25% each)
-      layout = "spotlight-with-two";
-      break;
-    case 4:
-      cols = 2; rows = 2; // Perfect 2x2 grid (25% each)
-      layout = "quad";
-      break;
-    case 5:
-    case 6:
-      cols = 3; rows = 2; // 3x2 grid
-      layout = "gallery-6";
-      break;
-    case 7:
-    case 8:
-    case 9:
-      cols = 3; rows = 3; // 3x3 grid
-      layout = "gallery-9";
-      break;
-    default:
-      // Fall back to Google Meet's formula for larger groups
-      cols = Math.ceil(Math.sqrt(count));
-      rows = Math.ceil(count / cols);
-      layout = "auto-grid";
-  }
-  
-  console.log(`📐 Optimal Layout: ${count} participants → ${layout} (${cols}x${rows})`);
-  
-  // Apply the grid layout
-  applyOptimalGridLayout(count, cols, rows, layout);
-  
-  // Update participant count display
+  videoGrid.className = `video-grid grid-${Math.min(count, 9)}`;
   participantCount.textContent = `${count} participant${count !== 1 ? 's' : ''}`;
-  
-  // Apply active speaker highlighting
-  updateActiveSpeakerLayout();
-}
-
-function applyOptimalGridLayout(count, cols, rows, layout) {
-  const participants_array = Array.from(participants.values());
-  
-  // Reset all tiles to default styling
-  participants_array.forEach((participant, index) => {
-    const tile = participant.tileElement;
-    tile.style.gridColumn = '';
-    tile.style.gridRow = '';
-    tile.style.gridArea = '';
-  });
-  
-  // Set up the basic grid structure
-  videoGrid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
-  videoGrid.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
-  
-  // Apply special layouts for optimal space usage
-  switch (layout) {
-    case "single":
-      // Full screen for single participant
-      if (participants_array[0]) {
-        participants_array[0].tileElement.style.gridColumn = "1";
-        participants_array[0].tileElement.style.gridRow = "1";
-      }
-      break;
-      
-    case "side-by-side":
-      // 50/50 split for two participants
-      if (participants_array[0]) {
-        participants_array[0].tileElement.style.gridColumn = "1";
-        participants_array[0].tileElement.style.gridRow = "1";
-      }
-      if (participants_array[1]) {
-        participants_array[1].tileElement.style.gridColumn = "2";
-        participants_array[1].tileElement.style.gridRow = "1";
-      }
-      break;
-      
-    case "spotlight-with-two":
-      // Special 3-person layout: one large (spans 2 cells) + two small
-      videoGrid.style.gridTemplateColumns = "2fr 1fr";
-      videoGrid.style.gridTemplateRows = "1fr 1fr";
-      
-      if (participants_array[0]) {
-        // Main participant gets larger space (left side)
-        participants_array[0].tileElement.style.gridColumn = "1";
-        participants_array[0].tileElement.style.gridRow = "1 / span 2";
-      }
-      if (participants_array[1]) {
-        // Second participant (top right)
-        participants_array[1].tileElement.style.gridColumn = "2";
-        participants_array[1].tileElement.style.gridRow = "1";
-      }
-      if (participants_array[2]) {
-        // Third participant (bottom right)
-        participants_array[2].tileElement.style.gridColumn = "2";
-        participants_array[2].tileElement.style.gridRow = "2";
-      }
-      break;
-      
-    case "quad":
-      // Perfect 2x2 grid - no special positioning needed
-      break;
-      
-    default:
-      // Standard grid layout - no special positioning needed
-      break;
-  }
-}
-
-// Detect and highlight active speaker
-function updateActiveSpeaker() {
-  if (audioLevels.size === 0) return;
-  
-  let maxLevel = 0;
-  let speakerId = null;
-  const now = Date.now();
-  
-  // Find participant with highest recent audio level
-  audioLevels.forEach((data, participantId) => {
-    // Only consider recent audio data (within last 2 seconds)
-    if (now - data.timestamp < 2000 && data.level > maxLevel && data.level > AUDIO_LEVEL_THRESHOLD) {
-      maxLevel = data.level;
-      speakerId = participantId;
-    }
-  });
-  
-  // Update active speaker if changed
-  if (speakerId !== activeSpeaker) {
-    const previousSpeaker = activeSpeaker;
-    activeSpeaker = speakerId;
-    
-    console.log(`🗣️ Active speaker changed: ${previousSpeaker} → ${activeSpeaker}`);
-    updateActiveSpeakerLayout();
-  }
-}
-
-// Apply visual highlighting to active speaker
-function updateActiveSpeakerLayout() {
-  const count = participants.size;
-  
-  participants.forEach((participant, participantId) => {
-    const tile = participant.tileElement;
-    const isActiveSpeaker = participantId === activeSpeaker;
-    
-    // Remove existing active speaker classes
-    tile.classList.remove('active-speaker', 'background-participant');
-    
-    if (isActiveSpeaker) {
-      // Highlight active speaker
-      tile.classList.add('active-speaker');
-      
-      // For 3-person layout, make active speaker take the main position
-      if (count === 3) {
-        rearrangeForActiveSpeaker(participantId);
-      }
-      
-      tile.style.border = '3px solid #1a73e8';
-      tile.style.boxShadow = '0 0 20px rgba(26, 115, 232, 0.5)';
-      
-      // Optimize bandwidth for active speaker (higher quality)
-      optimizeBandwidthForParticipant(participantId, true);
-    } else if (participants.size > 1) {
-      // Style background participants
-      tile.classList.add('background-participant');
-      tile.style.border = '1px solid rgba(255,255,255,0.2)';
-      tile.style.boxShadow = 'none';
-      
-      // Optimize bandwidth for background participants (lower quality)
-      optimizeBandwidthForParticipant(participantId, false);
-    } else {
-      // Single participant - no special styling
-      tile.style.border = '1px solid rgba(255,255,255,0.2)';
-      tile.style.boxShadow = 'none';
-    }
-  });
-}
-
-// Rearrange participants to put active speaker in the main position for 3-person layout
-function rearrangeForActiveSpeaker(activeSpeakerId) {
-  const participantsArray = Array.from(participants.entries());
-  const count = participantsArray.length;
-  
-  if (count !== 3) return; // Only apply this for 3-person layout
-  
-  // Find the active speaker
-  let activeSpeakerIndex = participantsArray.findIndex(([id]) => id === activeSpeakerId);
-  if (activeSpeakerIndex === -1) return;
-  
-  // Rearrange so active speaker is first (gets the main position)
-  if (activeSpeakerIndex !== 0) {
-    // Move active speaker to first position
-    const activeSpeakerEntry = participantsArray.splice(activeSpeakerIndex, 1)[0];
-    participantsArray.unshift(activeSpeakerEntry);
-    
-    // Reapply the 3-person layout with new arrangement
-    videoGrid.style.gridTemplateColumns = "2fr 1fr";
-    videoGrid.style.gridTemplateRows = "1fr 1fr";
-    
-    // Apply positions
-    participantsArray.forEach(([id, participant], index) => {
-      const tile = participant.tileElement;
-      switch (index) {
-        case 0: // Active speaker - main position (left side)
-          tile.style.gridColumn = "1";
-          tile.style.gridRow = "1 / span 2";
-          break;
-        case 1: // Second participant (top right)
-          tile.style.gridColumn = "2";
-          tile.style.gridRow = "1";
-          break;
-        case 2: // Third participant (bottom right)
-          tile.style.gridColumn = "2";
-          tile.style.gridRow = "2";
-          break;
-      }
-    });
-  }
-}
-
-// Bandwidth optimization for active vs background participants
-async function optimizeBandwidthForParticipant(participantId, isActiveSpeaker) {
-  const pc = peerConnections.get(participantId);
-  if (!pc || !isAdaptiveMode) return;
-  
-  const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
-  if (!sender || !sender.track) return;
-  
-  try {
-    const params = sender.getParameters();
-    if (!params.encodings || !params.encodings[0]) return;
-    
-    if (isActiveSpeaker) {
-      // High quality for active speaker
-      params.encodings[0].maxBitrate = 1200000; // 1.2 Mbps
-      params.encodings[0].priority = 'high';
-      params.encodings[0].maxFramerate = 30;
-      
-      // Apply high-quality video constraints to local track
-      if (participantId !== 'local' && localStream) {
-        const videoTrack = localStream.getVideoTracks()[0];
-        if (videoTrack) {
-          await videoTrack.applyConstraints(VIDEO_CONSTRAINTS.HIGH);
-        }
-      }
-      
-      console.log(`📹 High quality applied for active speaker: ${participantId}`);
-    } else {
-      // Lower quality for background participants
-      params.encodings[0].maxBitrate = 300000; // 300 kbps
-      params.encodings[0].priority = 'medium';
-      params.encodings[0].maxFramerate = 15;
-      
-      console.log(`📹 Reduced quality applied for background: ${participantId}`);
-    }
-    
-    await sender.setParameters(params);
-  } catch (error) {
-    console.error(`Error optimizing bandwidth for ${participantId}:`, error);
-  }
 }
 
 // Network monitoring and adaptation functions
 async function monitorNetworkQuality() {
-  // Skip monitoring during initial connection phase
-  if (initialConnectionPhase && connectionStartTime && (Date.now() - connectionStartTime) > 10000) {
-    initialConnectionPhase = false;
-    console.log('🎯 Network adaptation enabled after initial connection phase');
-  }
-  
   for (const [peerId, pc] of peerConnections) {
     try {
       const stats = await pc.getStats();
@@ -489,15 +135,14 @@ async function monitorNetworkQuality() {
       
       if (networkMetrics) {
         networkStats.set(peerId, networkMetrics);
+        
+        if (isAdaptiveMode) {
+          await adaptToNetworkConditions(peerId, networkMetrics);
+        }
       }
     } catch (error) {
       console.error(`Error monitoring ${peerId}:`, error);
     }
-  }
-  
-  // Perform adaptation based on overall network conditions
-  if (networkStats.size > 0) {
-    await adaptToNetworkConditions();
   }
   
   updateNetworkIndicators();
@@ -568,20 +213,13 @@ function analyzeStats(stats, peerId) {
     metrics.jitter = inboundAudio.jitter || 0;
   }
   
-  // Determine overall network quality - be more conservative
+  // Determine overall network quality
   const totalBitrate = metrics.videoBitrate + metrics.audioBitrate;
   const totalPacketLoss = Math.max(metrics.videoPacketLoss, metrics.audioPacketLoss);
   
-  // Don't adapt during initial connection phase (first 10 seconds)
-  if (initialConnectionPhase) {
-    metrics.quality = 'HIGH';
-    return metrics;
-  }
-  
-  // More conservative thresholds to prevent unnecessary quality drops
-  if (totalBitrate < BANDWIDTH_THRESHOLDS.LOW && totalPacketLoss > 8 && metrics.rtt > 500) {
+  if (totalBitrate < BANDWIDTH_THRESHOLDS.LOW || totalPacketLoss > 5 || metrics.rtt > 300) {
     metrics.quality = 'LOW';
-  } else if (totalBitrate < BANDWIDTH_THRESHOLDS.MEDIUM && totalPacketLoss > 5 && metrics.rtt > 300) {
+  } else if (totalBitrate < BANDWIDTH_THRESHOLDS.MEDIUM || totalPacketLoss > 2 || metrics.rtt > 150) {
     metrics.quality = 'MEDIUM';
   } else {
     metrics.quality = 'HIGH';
@@ -594,65 +232,51 @@ function analyzeStats(stats, peerId) {
   return metrics;
 }
 
-async function adaptToNetworkConditions() {
-  if (!localStream || !isAdaptiveMode) return;
+async function adaptToNetworkConditions(peerId, metrics) {
+  const pc = peerConnections.get(peerId);
+  if (!pc || !localStream) return;
   
-  // Calculate overall network quality from all peers
-  let totalBitrate = 0;
-  let maxPacketLoss = 0;
-  let maxRtt = 0;
-  let peerCount = 0;
-  let worstQuality = 'HIGH';
+  const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
+  if (!sender || !sender.track) return;
   
-  networkStats.forEach((metrics, peerId) => {
-    totalBitrate += metrics.videoBitrate + metrics.audioBitrate;
-    maxPacketLoss = Math.max(maxPacketLoss, Math.max(metrics.videoPacketLoss, metrics.audioPacketLoss));
-    maxRtt = Math.max(maxRtt, metrics.rtt);
-    peerCount++;
+  let shouldChangeQuality = false;
+  let newQuality = currentVideoQuality;
+  
+  // Determine if we need to change video quality
+  if (metrics.quality === 'LOW' && currentVideoQuality !== 'AUDIO_ONLY') {
+    newQuality = 'AUDIO_ONLY';
+    shouldChangeQuality = true;
+  } else if (metrics.quality === 'MEDIUM' && currentVideoQuality === 'HIGH') {
+    newQuality = 'MEDIUM';
+    shouldChangeQuality = true;
+  } else if (metrics.quality === 'HIGH' && currentVideoQuality !== 'HIGH') {
+    newQuality = 'HIGH';
+    shouldChangeQuality = true;
+  }
+  
+  if (shouldChangeQuality) {
+    await adjustVideoQuality(newQuality, sender);
+  }
+  
+  // Audio prioritization - ensure audio remains enabled even in poor conditions
+  const audioSender = pc.getSenders().find(s => s.track && s.track.kind === 'audio');
+  if (audioSender && audioSender.track) {
+    // Keep audio enabled unless explicitly muted by user
+    audioSender.track.enabled = !isMicMuted;
     
-    if (metrics.quality === 'LOW') worstQuality = 'LOW';
-    else if (metrics.quality === 'MEDIUM' && worstQuality === 'HIGH') worstQuality = 'MEDIUM';
-  });
-  
-  if (peerCount === 0) return;
-  
-  // Only adapt if we have consistent bad quality across multiple measurement cycles
-  let targetQuality = currentVideoQuality;
-  
-  // Be more conservative - require multiple bad conditions
-  if (worstQuality === 'LOW' && maxPacketLoss > 10) {
-    targetQuality = 'AUDIO_ONLY';
-  } else if (worstQuality === 'MEDIUM' && maxPacketLoss > 7 && currentVideoQuality === 'HIGH') {
-    targetQuality = 'MEDIUM';
-  } else if (worstQuality === 'HIGH' && maxPacketLoss < 3 && currentVideoQuality !== 'HIGH') {
-    // Recovery condition - network has improved
-    targetQuality = 'HIGH';
-  }
-  
-  // Only change quality if it's different from current
-  if (targetQuality !== currentVideoQuality) {
-    console.log(`🔄 Network adaptation: ${currentVideoQuality} → ${targetQuality} (peers: ${peerCount}, loss: ${maxPacketLoss.toFixed(1)}%)`);
-    await adjustVideoQualityForAllPeers(targetQuality);
-  }
-}
-
-async function adjustVideoQualityForAllPeers(quality) {
-  // Apply video quality changes to all peer connections
-  const videoSenders = [];
-  
-  peerConnections.forEach((pc, peerId) => {
-    const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
-    if (sender && sender.track) {
-      videoSenders.push({ sender, peerId });
-    }
-  });
-  
-  // Adjust all video senders
-  for (const { sender, peerId } of videoSenders) {
-    try {
-      await adjustVideoQuality(quality, sender);
-    } catch (error) {
-      console.error(`Error adjusting video quality for ${peerId}:`, error);
+    // Prioritize audio by adjusting encoding parameters
+    if (metrics.audioPacketLoss > 3) {
+      console.log(`🎵 Prioritizing audio for ${peerId} due to packet loss`);
+      try {
+        const params = audioSender.getParameters();
+        if (params.encodings && params.encodings[0]) {
+          params.encodings[0].priority = 'high';
+          params.encodings[0].maxBitrate = 64000; // Ensure audio gets bandwidth
+          await audioSender.setParameters(params);
+        }
+      } catch (error) {
+        console.error('Error prioritizing audio:', error);
+      }
     }
   }
 }
@@ -892,15 +516,8 @@ joinBtn.onclick = async () => {
     // Create network monitoring UI indicators
     createNetworkIndicators();
     
-    // Initialize connection timing
-    connectionStartTime = Date.now();
-    initialConnectionPhase = true;
-    
     // Start network quality monitoring
-    networkMonitoringInterval = setInterval(monitorNetworkQuality, 3000); // Increased to 3 seconds for less aggressive monitoring
-    
-    // Start active speaker detection
-    activeSpeakerInterval = setInterval(updateActiveSpeaker, SPEAKER_UPDATE_INTERVAL);
+    networkMonitoringInterval = setInterval(monitorNetworkQuality, 2000);
     
     // Join room
     ws.send(JSON.stringify({ type: 'join-room', room: 'default' }));
@@ -924,16 +541,6 @@ leaveBtn.onclick = () => {
     clearInterval(networkMonitoringInterval);
     networkMonitoringInterval = null;
   }
-  
-  // Stop active speaker monitoring
-  if (activeSpeakerInterval) {
-    clearInterval(activeSpeakerInterval);
-    activeSpeakerInterval = null;
-  }
-  
-  // Clear active speaker data
-  activeSpeaker = null;
-  audioLevels.clear();
   
   // Remove network indicators
   removeNetworkIndicators();
@@ -960,8 +567,6 @@ leaveBtn.onclick = () => {
   
   // Reset state
   currentVideoQuality = 'HIGH';
-  initialConnectionPhase = true;
-  connectionStartTime = null;
   
   // Reset UI
   joinBtn.style.display = 'block';
@@ -1224,7 +829,7 @@ function createNetworkIndicators() {
   networkQualityIndicator.textContent = '📶 HIGH';
   networkQualityIndicator.style.cssText = `
     position: fixed;
-    bottom: 120px;
+    top: 10px;
     right: 10px;
     background: rgba(0,0,0,0.7);
     color: #28a745;
@@ -1241,7 +846,7 @@ function createNetworkIndicators() {
   videoQualityIndicator.textContent = '📹 HIGH';
   videoQualityIndicator.style.cssText = `
     position: fixed;
-    bottom: 80px;
+    top: 50px;
     right: 10px;
     background: rgba(0,0,0,0.7);
     color: #28a745;
@@ -1258,7 +863,7 @@ function createNetworkIndicators() {
   adaptiveModeToggle.textContent = '🔄 Adaptive: ON';
   adaptiveModeToggle.style.cssText = `
     position: fixed;
-    bottom: 40px;
+    top: 90px;
     right: 10px;
     background: rgba(0,123,255,0.8);
     color: white;
@@ -1275,12 +880,6 @@ function createNetworkIndicators() {
     adaptiveModeToggle.textContent = `🔄 Adaptive: ${isAdaptiveMode ? 'ON' : 'OFF'}`;
     adaptiveModeToggle.style.background = isAdaptiveMode ? 'rgba(0,123,255,0.8)' : 'rgba(108,117,125,0.8)';
     console.log(`🔄 Adaptive mode ${isAdaptiveMode ? 'enabled' : 'disabled'}`);
-    
-    // If disabling adaptive mode, reset to high quality immediately
-    if (!isAdaptiveMode && currentVideoQuality !== 'HIGH') {
-      console.log('📹 Resetting to HIGH quality (adaptive mode disabled)');
-      adjustVideoQualityForAllPeers('HIGH');
-    }
   };
   
   document.body.appendChild(adaptiveModeToggle);

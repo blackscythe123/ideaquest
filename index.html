@@ -4,258 +4,330 @@
   <meta charset="UTF-8">
   <title>WebRTC Video Conference - Google Meet Style</title>
   <style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: #0f1113;
-    color: #e6eef7;
-    height: 100vh;
-    display: flex;
-    flex-direction: column;
-  }
-
-  .header {
-    background: rgba(16,16,18,0.9);
-    backdrop-filter: blur(6px);
-    padding: 14px 22px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    border-bottom: 1px solid rgba(255,255,255,0.03);
-  }
-
-  .header h1 { font-size: 20px; font-weight: 600; color: #fff; }
-  .meeting-info { font-size: 14px; color: #a9b3bf; }
-
-  /* Improved grid layout */
-  .video-grid {
-    flex: 1;
-    display: grid;
-    gap: 8px;
-    padding: 12px;
-    overflow: auto;
-    align-content: center;
-    justify-content: center;
+    * { margin: 0; padding: 0; box-sizing: border-box; }
     
-    /* Default grid for many participants */
-    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-    grid-auto-rows: minmax(135px, auto);
-  }
-
-  /* Special layouts */
-  .video-grid.single {
-    /* Single participant - center the video */
-    display: flex;
-    justify-content: center;
-    align-items: center;
-  }
-
-  .video-grid.single .participant-tile {
-    max-width: 900px;
-    max-height: 506px;
-    width: 90%;
-    height: auto;
-    aspect-ratio: 16/9;
-  }
-
-  .video-grid.double {
-    /* 2 participants - side by side */
-    grid-template-columns: repeat(2, 1fr);
-    grid-auto-rows: minmax(200px, 1fr);
-  }
-
-  .video-grid.triple {
-    /* 3 participants - 2 on top, 1 bottom */
-    grid-template-columns: repeat(2, 1fr);
-    grid-template-rows: repeat(2, 1fr);
-  }
-
-  .video-grid.triple .participant-tile:last-child {
-    grid-column: span 2;
-  }
-
-  .video-grid.four {
-    /* 4 participants - 2x2 grid */
-    grid-template-columns: repeat(2, 1fr);
-    grid-template-rows: repeat(2, 1fr);
-  }
-
-  .video-grid.five {
-    /* 5 participants - 3x2 grid with some spanning */
-    grid-template-columns: repeat(3, 1fr);
-    grid-template-rows: repeat(2, 1fr);
-  }
-
-  .video-grid.five .participant-tile:nth-child(1),
-  .video-grid.five .participant-tile:nth-child(2) {
-    grid-row: span 2;
-  }
-
-  .video-grid.six {
-    /* 6 participants - 3x2 grid */
-    grid-template-columns: repeat(3, 1fr);
-    grid-template-rows: repeat(2, 1fr);
-  }
-
-  .video-grid.seven,
-  .video-grid.eight {
-    /* 7-8 participants - 4x2 grid */
-    grid-template-columns: repeat(4, 1fr);
-    grid-template-rows: repeat(2, 1fr);
-  }
-
-  .video-grid.nine {
-    /* 9 participants - 3x3 grid */
-    grid-template-columns: repeat(3, 1fr);
-    grid-template-rows: repeat(3, 1fr);
-  }
-
-  .participant-tile {
-    background: rgba(26,26,28,0.75);
-    border-radius: 12px;
-    position: relative;
-    overflow: hidden;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    box-shadow: 0 8px 20px rgba(0,0,0,0.6);
-    transition: transform .18s ease, box-shadow .18s ease;
-    /* Force tile to behave like a video frame */
-    aspect-ratio: 16 / 9;
-  }
-
-  .participant-tile:hover { transform: translateY(-6px); box-shadow: 0 18px 40px rgba(0,0,0,0.7); }
-
-  .participant-video {
-    width: 100%;
-    height: 100%;
-    object-fit: cover; /* crop to fill tile */
-    display: block;
-  }
-
-  .participant-info {
-    position: absolute;
-    bottom: 10px;
-    left: 10px;
-    background: rgba(0,0,0,0.55);
-    padding: 6px 10px;
-    border-radius: 8px;
-    font-size: 13px;
-    font-weight: 600;
-    color: #fff;
-    backdrop-filter: blur(4px);
-  }
-
-  .local-participant { box-shadow: 0 0 0 3px rgba(76,175,80,0.12) inset; }
-  .remote-participant { box-shadow: 0 0 0 3px rgba(33,150,243,0.09) inset; }
-
-  .no-video {
-    width: 100%;
-    height: 100%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 48px;
-    color: #8b949e;
-  }
-
-  .controls {
-    background: rgba(14,14,14,0.95);
-    backdrop-filter: blur(6px);
-    padding: 12px 22px;
-    display: flex;
-    justify-content: center;
-    gap: 16px;
-    border-top: 1px solid rgba(255,255,255,0.02);
-  }
-
-  .control-btn {
-    background: #232428;
-    border: none;
-    border-radius: 50%;
-    width: 52px;
-    height: 52px;
-    color: #fff;
-    font-size: 20px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: transform .16s ease, background .16s ease;
-  }
-
-  .control-btn:hover { transform: scale(1.07); background: #2e3236; }
-  .control-btn.join { background: linear-gradient(90deg,#34a853,#2bb673); width: auto; padding: 0 20px; border-radius: 26px; font-weight: 700; }
-  .control-btn.leave, .control-btn.muted { background: linear-gradient(90deg,#f44336,#ff6b5f); }
-
-  .stats-panel {
-    position: fixed;
-    top: 86px;
-    right: 18px;
-    background: rgba(18,18,19,0.92);
-    padding: 12px 14px;
-    border-radius: 10px;
-    font-size: 12px;
-    font-family: monospace;
-    color: #dfe9f3;
-    max-width: 300px;
-    z-index: 1000;
-    backdrop-filter: blur(6px);
-  }
-
-  .participant-count {
-    background: rgba(33,150,243,0.12);
-    padding: 6px 12px;
-    border-radius: 16px;
-    font-size: 14px;
-    color: #90caf9;
-    font-weight: 700;
-  }
-
-  /* Make sure video element doesn't add its own margin */
-  video { display: block; }
-  
-  /* Responsive adjustments */
-  @media (max-width: 768px) {
-    .video-grid {
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      grid-auto-rows: minmax(100px, auto);
-      gap: 6px;
-      padding: 8px;
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0f1113;
+      color: #e6eef7;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
     }
     
-    .video-grid.double,
-    .video-grid.four {
-      grid-template-columns: 1fr;
-      grid-auto-rows: minmax(180px, 1fr);
+    .header {
+      background: rgba(16,16,18,0.9);
+      backdrop-filter: blur(6px);
+      padding: 14px 22px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid rgba(255,255,255,0.03);
+    }
+    
+    .header h1 { 
+      font-size: 20px; 
+      font-weight: 600; 
+      color: #fff; 
+    }
+    
+    .meeting-info { 
+      font-size: 14px; 
+      color: #a9b3bf; 
+    }
+    
+    /* Improved grid layout */
+    .video-grid {
+      flex: 1;
+      display: grid;
+      gap: 8px;
+      padding: 12px;
+      overflow: auto;
+      align-content: center;
+      justify-content: center;
+      
+      /* Default grid for many participants */
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      grid-auto-rows: minmax(135px, auto);
+    }
+    
+    /* Special layouts */
+    .video-grid.single {
+      /* Single participant - center the video */
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+    
+    .video-grid.single .participant-tile {
+      max-width: 900px;
+      max-height: 506px;
+      width: 90%;
+      height: auto;
+      aspect-ratio: 16/9;
+    }
+    
+    .video-grid.double {
+      /* 2 participants - side by side */
+      grid-template-columns: repeat(2, 1fr);
+      grid-auto-rows: minmax(200px, 1fr);
     }
     
     .video-grid.triple {
-      grid-template-columns: 1fr;
-      grid-template-rows: repeat(3, 1fr);
+      /* 3 participants - 2 on top, 1 bottom */
+      grid-template-columns: repeat(2, 1fr);
+      grid-template-rows: repeat(2, 1fr);
     }
     
     .video-grid.triple .participant-tile:last-child {
-      grid-column: 1;
+      grid-column: span 2;
+    }
+    
+    .video-grid.four {
+      /* 4 participants - 2x2 grid */
+      grid-template-columns: repeat(2, 1fr);
+      grid-template-rows: repeat(2, 1fr);
+    }
+    
+    .video-grid.five {
+      /* 5 participants - 3x2 grid with some spanning */
+      grid-template-columns: repeat(3, 1fr);
+      grid-template-rows: repeat(2, 1fr);
+    }
+    
+    .video-grid.five .participant-tile:nth-child(1),
+    .video-grid.five .participant-tile:nth-child(2) {
+      grid-row: span 2;
+    }
+    
+    .video-grid.six {
+      /* 6 participants - 3x2 grid */
+      grid-template-columns: repeat(3, 1fr);
+      grid-template-rows: repeat(2, 1fr);
+    }
+    
+    .video-grid.seven,
+    .video-grid.eight {
+      /* 7-8 participants - 4x2 grid */
+      grid-template-columns: repeat(4, 1fr);
+      grid-template-rows: repeat(2, 1fr);
+    }
+    
+    .video-grid.nine {
+      /* 9 participants - 3x3 grid */
+      grid-template-columns: repeat(3, 1fr);
+      grid-template-rows: repeat(3, 1fr);
+    }
+    
+    .participant-tile {
+      background: rgba(26,26,28,0.75);
+      border-radius: 12px;
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 8px 20px rgba(0,0,0,0.6);
+      transition: transform .18s ease, box-shadow .18s ease;
+      /* Force tile to behave like a video frame */
+      aspect-ratio: 16 / 9;
+      min-height: 180px;
+      border: 1px solid rgba(255,255,255,0.2);
+    }
+    
+    .participant-tile:hover { 
+      transform: translateY(-6px); 
+      box-shadow: 0 18px 40px rgba(0,0,0,0.7); 
+    }
+    
+    .participant-tile.active-speaker {
+      border: 3px solid #1a73e8;
+      box-shadow: 0 0 20px rgba(26, 115, 232, 0.5);
+      z-index: 100;
+    }
+    
+    .participant-tile.background-participant {
+      opacity: 0.85;
+    }
+    
+    /* Responsive adjustments for different layouts */
+    @media (max-width: 768px) {
+      .video-grid {
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        grid-auto-rows: minmax(100px, auto);
+        gap: 6px;
+        padding: 8px;
+      }
+      
+      .video-grid.double,
+      .video-grid.four {
+        grid-template-columns: 1fr;
+        grid-auto-rows: minmax(180px, 1fr);
+      }
+      
+      .video-grid.triple {
+        grid-template-columns: 1fr;
+        grid-template-rows: repeat(3, 1fr);
+      }
+      
+      .video-grid.triple .participant-tile:last-child {
+        grid-column: 1;
+      }
+      
+      .participant-tile {
+        min-height: 120px;
+      }
+    }
+    
+    /* Ensure proper aspect ratios for video elements */
+    .participant-video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover; /* crop to fill tile */
+      display: block;
+      border-radius: 12px;
+    }
+    
+    .participant-video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      border-radius: 8px;
+    }
+    
+    .participant-video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover; /* crop to fill tile */
+      display: block;
+      border-radius: 12px;
+    }
+    
+    .participant-info {
+      position: absolute;
+      bottom: 10px;
+      left: 10px;
+      background: rgba(0,0,0,0.55);
+      padding: 6px 10px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      color: #fff;
+      backdrop-filter: blur(4px);
+    }
+    
+    .activity-status {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background: rgba(0,0,0,0.55);
+      padding: 6px 10px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 700;
+      color: #fff;
+      backdrop-filter: blur(4px);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .activity-status.active { background: rgba(40,167,69,0.8); }
+    .activity-status.slept { background: rgba(220,53,69,0.8); }
+    .activity-status.unknown { background: rgba(108,117,125,0.8); }
+    
+    .local-participant { 
+      box-shadow: 0 0 0 3px rgba(76,175,80,0.12) inset; 
+    }
+    
+    .remote-participant { 
+      box-shadow: 0 0 0 3px rgba(33,150,243,0.09) inset; 
+    }
+    
+    .no-video {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 48px;
+      color: #8b949e;
     }
     
     .controls {
-      padding: 10px 15px;
+      background: rgba(14,14,14,0.95);
+      backdrop-filter: blur(6px);
+      padding: 12px 22px;
+      display: flex;
+      justify-content: center;
+      gap: 16px;
+      border-top: 1px solid rgba(255,255,255,0.02);
     }
     
     .control-btn {
-      width: 46px;
-      height: 46px;
-      font-size: 18px;
+      background: #232428;
+      border: none;
+      border-radius: 50%;
+      width: 52px;
+      height: 52px;
+      color: #fff;
+      font-size: 20px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: transform .16s ease, background .16s ease;
     }
-  }
-</style>
+    
+    .control-btn:hover { 
+      transform: scale(1.07); 
+      background: #2e3236; 
+    }
+    
+    .control-btn.join { 
+      background: linear-gradient(90deg,#34a853,#2bb673); 
+      width: auto; 
+      padding: 0 20px; 
+      border-radius: 26px; 
+      font-weight: 700; 
+    }
+    
+    .control-btn.leave, .control-btn.muted { 
+      background: linear-gradient(90deg,#f44336,#ff6b5f); 
+    }
+    
+    .stats-panel {
+      position: fixed;
+      top: 80px;
+      right: 20px;
+      background: rgba(18,18,19,0.92);
+      padding: 12px 14px;
+      border-radius: 10px;
+      font-size: 12px;
+      font-family: monospace;
+      color: #dfe9f3;
+      max-width: 300px;
+      z-index: 1000;
+      backdrop-filter: blur(6px);
+    }
+    
+    .participant-count {
+      background: rgba(33,150,243,0.12);
+      padding: 6px 12px;
+      border-radius: 16px;
+      font-size: 14px;
+      color: #90caf9;
+      font-weight: 700;
+    }
+    
+    /* Make sure video element doesn't add its own margin */
+    video { display: block; }
+  </style>
 </head>
 <body>
   <div class="header">
     <h1>🎥 Video Conference</h1>
     <div class="meeting-info">
-      <span class="participant-count" id="participantCount">0 participants</span>
+      <span class="participant-count" id="participantCount">1 participant</span>
     </div>
   </div>
   
@@ -282,611 +354,8 @@
     <div id="connectionStats">Not connected</div>
   </div>
   
-  <script>
-// WebSocket connection
-const wsProtocol = window.location.protocol === "https:" ? "wss" : "ws";
-const ws = new WebSocket(wsProtocol + "://" + window.location.host);
-
-// State management
-let localStream;
-let myId;
-let isMicMuted = false;
-let isCameraOff = false;
-const participants = new Map(); // Store participant data
-const peerConnections = new Map(); // Store WebRTC connections
-
-// DOM elements
-const videoGrid = document.getElementById('videoGrid');
-const participantCount = document.getElementById('participantCount');
-const joinBtn = document.getElementById('joinBtn');
-const leaveBtn = document.getElementById('leaveBtn');
-const micBtn = document.getElementById('micBtn');
-const cameraBtn = document.getElementById('cameraBtn');
-const statsPanel = document.getElementById('connectionStats');
-
-// WebSocket event handlers
-ws.onopen = () => console.log('🔌 Connected to server');
-ws.onerror = (error) => console.error('❌ WebSocket error:', error);
-ws.onclose = () => console.log('🔌 Disconnected from server');
-
-// Participant class to manage individual participants
-class Participant {
-  constructor(id, isLocal = false) {
-    this.id = id;
-    this.isLocal = isLocal;
-    this.stream = null;
-    this.videoElement = null;
-    this.tileElement = null;
-    this.name = isLocal ? 'You' : `User ${id.substring(0, 8)}`;
-    
-    this.createTile();
-  }
-  
-  createTile() {
-    // Create participant tile
-    this.tileElement = document.createElement('div');
-    this.tileElement.className = `participant-tile ${this.isLocal ? 'local-participant' : 'remote-participant'}`;
-    this.tileElement.id = `participant-${this.id}`;
-    
-    // Create video element
-    this.videoElement = document.createElement('video');
-    this.videoElement.className = 'participant-video';
-    this.videoElement.autoplay = true;
-    this.videoElement.playsInline = true;
-    if (this.isLocal) {
-      this.videoElement.muted = true; // Always mute local video to prevent feedback
-    }
-    
-    // Create info overlay
-    const infoElement = document.createElement('div');
-    infoElement.className = 'participant-info';
-    infoElement.textContent = this.name;
-    
-    // Create no-video placeholder
-    const noVideoElement = document.createElement('div');
-    noVideoElement.className = 'no-video';
-    noVideoElement.textContent = '👤';
-    
-    this.tileElement.appendChild(this.videoElement);
-    this.tileElement.appendChild(noVideoElement);
-    this.tileElement.appendChild(infoElement);
-    
-    videoGrid.appendChild(this.tileElement);
-    updateGridLayout();
-  }
-  
-  setStream(stream) {
-    this.stream = stream;
-    this.videoElement.srcObject = stream;
-    
-    // Hide no-video placeholder when stream is available
-    const noVideo = this.tileElement.querySelector('.no-video');
-    if (stream && stream.getVideoTracks().length > 0) {
-      this.videoElement.style.display = 'block';
-      noVideo.style.display = 'none';
-    } else {
-      this.videoElement.style.display = 'none';
-      noVideo.style.display = 'flex';
-    }
-  }
-  
-  remove() {
-    if (this.tileElement) {
-      this.tileElement.remove();
-      updateGridLayout();
-    }
-    if (this.stream) {
-      this.stream.getTracks().forEach(track => track.stop());
-    }
-  }
-}
-
-// Update video grid layout based on participant count
-function updateGridLayout() {
-  const count = participants.size;
-  
-  // Remove all layout classes
-  videoGrid.className = 'video-grid';
-  
-  // Apply appropriate layout class
-  if (count === 0) {
-    // No special class needed for empty grid
-  } else if (count === 1) {
-    videoGrid.classList.add('single');
-  } else if (count === 2) {
-    videoGrid.classList.add('double');
-  } else if (count === 3) {
-    videoGrid.classList.add('triple');
-  } else if (count === 4) {
-    videoGrid.classList.add('four');
-  } else if (count === 5) {
-    videoGrid.classList.add('five');
-  } else if (count === 6) {
-    videoGrid.classList.add('six');
-  } else if (count === 7) {
-    videoGrid.classList.add('seven');
-  } else if (count === 8) {
-    videoGrid.classList.add('eight');
-  } else if (count === 9) {
-    videoGrid.classList.add('nine');
-  }
-  // For more than 9, we rely on the default grid behavior
-  
-  // Update participant counter text
-  participantCount.textContent = `${count} participant${count !== 1 ? 's' : ''}`;
-  
-  // Update stats text
-  updateStats();
-}
-
-// Create peer connection for a specific participant
-function createPeerConnection(participantId) {
-  console.log(`📡 Creating peer connection for ${participantId}`);
-  
-  const pc = new RTCPeerConnection({
-    iceServers: [
-      { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' },
-      { urls: 'stun:stun2.l.google.com:19302' },
-      { urls: 'stun:stun.services.mozilla.com' },
-      // Add more STUN servers for better connectivity
-      { urls: 'stun:stun.stunprotocol.org:3478' },
-      { urls: 'stun:openrelay.metered.ca:80' }
-    ],
-    iceCandidatePoolSize: 10, // Pre-generate ICE candidates
-    iceTransportPolicy: 'all', // Use both UDP and TCP
-    bundlePolicy: 'max-bundle', // Bundle all media streams
-    rtcpMuxPolicy: 'require' // Multiplex RTP and RTCP
-  });
-
-  // Enhanced connection state monitoring
-  pc.onconnectionstatechange = () => {
-    const state = pc.connectionState;
-    console.log(`🔗 Connection with ${participantId}: ${state}`);
-    
-    // Update participant tile with connection status
-    const participant = participants.get(participantId);
-    if (participant) {
-      const infoElement = participant.tileElement.querySelector('.participant-info');
-      const baseText = participant.name;
-      
-      switch (state) {
-        case 'connecting':
-          infoElement.textContent = `${baseText} (connecting...)`;
-          infoElement.style.background = 'rgba(255, 193, 7, 0.8)'; // Yellow
-          break;
-        case 'connected':
-          infoElement.textContent = baseText;
-          infoElement.style.background = 'rgba(40, 167, 69, 0.8)'; // Green
-          break;
-        case 'disconnected':
-        case 'failed':
-          infoElement.textContent = `${baseText} (disconnected)`;
-          infoElement.style.background = 'rgba(220, 53, 69, 0.8)'; // Red
-          
-          // Attempt to reconnect after a short delay
-          setTimeout(() => {
-            console.log(`🔄 Attempting to reconnect to ${participantId}`);
-            reconnectToPeer(participantId);
-          }, 3000);
-          break;
-        default:
-          infoElement.textContent = `${baseText} (${state})`;
-          infoElement.style.background = 'rgba(0,0,0,0.7)'; // Default
-      }
-    }
-    
-    updateStats();
-  };
-
-  // ICE connection state monitoring
-  pc.oniceconnectionstatechange = () => {
-    const iceState = pc.iceConnectionState;
-    console.log(`🧊 ICE connection with ${participantId}: ${iceState}`);
-    
-    // Handle ICE connection failures
-    if (iceState === 'failed') {
-      console.log(`❌ ICE connection failed with ${participantId}, attempting restart`);
-      pc.restartIce(); // Restart ICE gathering
-    }
-  };
-
-  // ICE gathering state monitoring  
-  pc.onicegatheringstatechange = () => {
-    console.log(`❄️ ICE gathering with ${participantId}: ${pc.iceGatheringState}`);
-  };
-
-  pc.ontrack = (event) => {
-    console.log(`📹 Received track from ${participantId}`);
-    const participant = participants.get(participantId);
-    if (participant) {
-      participant.setStream(event.streams[0]);
-    }
-  };
-
-  // Enhanced ICE candidate handling
-  pc.onicecandidate = (event) => {
-    if (event.candidate) {
-      console.log(`🧊 Sending ICE candidate to ${participantId}:`, event.candidate.type);
-      ws.send(JSON.stringify({
-        type: 'candidate',
-        candidate: event.candidate,
-        targetId: participantId
-      }));
-    } else {
-      console.log(`🧊 All ICE candidates sent to ${participantId}`);
-    }
-  };
-
-  // Handle data channel (optional - for better connectivity testing)
-  const dataChannel = pc.createDataChannel('ping', { ordered: true });
-  dataChannel.onopen = () => {
-    console.log(`📨 Data channel opened with ${participantId}`);
-    // Send periodic pings to maintain connection
-    const pingInterval = setInterval(() => {
-      if (dataChannel.readyState === 'open') {
-        dataChannel.send(JSON.stringify({ type: 'ping', timestamp: Date.now() }));
-      } else {
-        clearInterval(pingInterval);
-      }
-    }, 30000); // Ping every 30 seconds
-  };
-
-  pc.ondatachannel = (event) => {
-    const channel = event.channel;
-    channel.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      if (data.type === 'ping') {
-        // Respond to ping
-        channel.send(JSON.stringify({ type: 'pong', timestamp: Date.now() }));
-      }
-    };
-  };
-
-  peerConnections.set(participantId, pc);
-  return pc;
-}
-
-// Join the meeting
-joinBtn.onclick = async () => {
-  try {
-    console.log('🚀 Joining meeting...');
-    
-    // Get user media
-    localStream = await navigator.mediaDevices.getUserMedia({
-      video: true,
-      audio: true
-    });
-    
-    console.log('🎥 Got local stream');
-    
-    // Create local participant
-    const localParticipant = new Participant('local', true);
-    localParticipant.setStream(localStream);
-    participants.set('local', localParticipant);
-    
-    // Join room
-    ws.send(JSON.stringify({ type: 'join-room', room: 'default' }));
-    
-    // Update UI
-    joinBtn.style.display = 'none';
-    updateGridLayout();
-    
-  } catch (error) {
-    console.error('❌ Error joining meeting:', error);
-    alert('Could not access camera/microphone. Please check permissions.');
-  }
-};
-
-// Leave the meeting
-leaveBtn.onclick = () => {
-  console.log('👋 Leaving meeting...');
-  
-  // Send leave message
-  ws.send(JSON.stringify({ type: 'leave-room' }));
-  
-  // Clean up all peer connections
-  peerConnections.forEach((pc) => pc.close());
-  peerConnections.clear();
-  
-  // Remove all participants
-  participants.forEach((participant) => participant.remove());
-  participants.clear();
-  
-  // Stop local stream
-  if (localStream) {
-    localStream.getTracks().forEach(track => track.stop());
-    localStream = null;
-  }
-  
-  // Reset UI
-  joinBtn.style.display = 'block';
-  updateGridLayout();
-};
-
-// Toggle microphone
-micBtn.onclick = () => {
-  if (localStream) {
-    const audioTrack = localStream.getAudioTracks()[0];
-    if (audioTrack) {
-      isMicMuted = !isMicMuted;
-      audioTrack.enabled = !isMicMuted;
-      micBtn.textContent = isMicMuted ? '🎤' : '🎤';
-      micBtn.className = `control-btn ${isMicMuted ? 'muted' : ''}`;
-      
-      // Update local participant info
-      const localParticipant = participants.get('local');
-      if (localParticipant) {
-        const infoElement = localParticipant.tileElement.querySelector('.participant-info');
-        infoElement.textContent = `You ${isMicMuted ? '(muted)' : ''}`;
-      }
-    }
-  }
-};
-
-// Toggle camera
-cameraBtn.onclick = () => {
-  if (localStream) {
-    const videoTrack = localStream.getVideoTracks()[0];
-    if (videoTrack) {
-      isCameraOff = !isCameraOff;
-      videoTrack.enabled = !isCameraOff;
-      cameraBtn.textContent = isCameraOff ? '📹' : '📹';
-      cameraBtn.className = `control-btn ${isCameraOff ? 'muted' : ''}`;
-      
-      // Update local video display
-      const localParticipant = participants.get('local');
-      if (localParticipant) {
-        localParticipant.setStream(localStream);
-      }
-    }
-  }
-};
-
-// Handle WebSocket messages
-ws.onmessage = async ({ data }) => {
-  const message = JSON.parse(data);
-  console.log('📨 Received:', message.type, message);
-
-  switch (message.type) {
-    case 'room-joined':
-      myId = message.yourId;
-      console.log(`🎉 Joined as ${myId}`);
-      
-      // Create offers for existing users with a small delay to avoid race conditions
-      for (let i = 0; i < message.users.length; i++) {
-        const user = message.users[i];
-        setTimeout(() => {
-          createOfferFor(user.id);
-        }, i * 500); // Stagger offers by 500ms each
-      }
-      break;
-
-    case 'user-joined':
-      console.log(`👋 User ${message.userId} joined`);
-      
-      // Create participant tile for new user
-      const newParticipant = new Participant(message.userId);
-      participants.set(message.userId, newParticipant);
-      break;
-
-    case 'user-left':
-      console.log(`👋 User ${message.userId} left`);
-      
-      // Remove participant
-      const participant = participants.get(message.userId);
-      if (participant) {
-        participant.remove();
-        participants.delete(message.userId);
-      }
-      
-      // Close peer connection
-      const pc = peerConnections.get(message.userId);
-      if (pc) {
-        pc.close();
-        peerConnections.delete(message.userId);
-      }
-      break;
-
-    case 'offer':
-      await handleOffer(message.fromId, message.offer);
-      break;
-
-    case 'answer':
-      await handleAnswer(message.fromId, message.answer);
-      break;
-
-    case 'candidate':
-      await handleCandidate(message.fromId, message.candidate);
-      break;
-      
-    case 'connection-failed':
-      console.log(`🔄 Connection failed message from ${message.fromId}, retrying...`);
-      // Retry connection after a delay
-      setTimeout(() => {
-        if (participants.has(message.fromId)) {
-          reconnectToPeer(message.fromId);
-        }
-      }, 2000);
-      break;
-      
-    default:
-      console.warn(`❓ Unknown message type: ${message.type}`);
-  }
-};
-
-// Reconnect to a peer that has connection issues
-async function reconnectToPeer(participantId) {
-  console.log(`🔄 Reconnecting to ${participantId}`);
-  
-  // Close existing connection
-  const existingPc = peerConnections.get(participantId);
-  if (existingPc) {
-    existingPc.close();
-    peerConnections.delete(participantId);
-  }
-  
-  // Wait a bit before reconnecting
-  await new Promise(resolve => setTimeout(resolve, 1000));
-  
-  // Create new offer if this peer is still in participants
-  if (participants.has(participantId) && localStream) {
-    console.log(`🔄 Creating new offer for ${participantId}`);
-    await createOfferFor(participantId);
-  }
-}
-
-// Create offer for a specific peer with enhanced error handling
-async function createOfferFor(peerId) {
-  console.log(`📤 Creating offer for ${peerId}`);
-  
-  // Create participant if not exists
-  if (!participants.has(peerId)) {
-    const participant = new Participant(peerId);
-    participants.set(peerId, participant);
-  }
-  
-  const pc = createPeerConnection(peerId);
-  
-  // Add local stream tracks
-  if (localStream) {
-    localStream.getTracks().forEach(track => {
-      console.log(`Adding ${track.kind} track to ${peerId}`);
-      pc.addTrack(track, localStream);
-    });
-  }
-
-  try {
-    // Create offer with enhanced options
-    const offer = await pc.createOffer({
-      offerToReceiveAudio: true,
-      offerToReceiveVideo: true,
-      voiceActivityDetection: true,
-      iceRestart: false
-    });
-    
-    await pc.setLocalDescription(offer);
-    
-    console.log(`📤 Sending offer to ${peerId}`);
-    ws.send(JSON.stringify({
-      type: 'offer',
-      offer: offer,
-      targetId: peerId
-    }));
-    
-    // Set up connection timeout
-    setTimeout(() => {
-      if (pc.connectionState === 'connecting' || pc.connectionState === 'new') {
-        console.log(`⏰ Connection timeout for ${peerId}, attempting reconnect`);
-        reconnectToPeer(peerId);
-      }
-    }, 15000); // 15 second timeout
-    
-  } catch (error) {
-    console.error(`❌ Error creating offer for ${peerId}:`, error);
-    
-    // Retry after a delay
-    setTimeout(() => {
-      console.log(`🔄 Retrying offer creation for ${peerId}`);
-      createOfferFor(peerId);
-    }, 5000);
-  }
-}
-
-// Handle incoming offer with improved error handling
-async function handleOffer(fromId, offer) {
-  console.log(`📥 Handling offer from ${fromId}`);
-  
-  // Create participant if not exists
-  if (!participants.has(fromId)) {
-    const participant = new Participant(fromId);
-    participants.set(fromId, participant);
-  }
-  
-  const pc = createPeerConnection(fromId);
-  
-  // Add local stream tracks
-  if (localStream) {
-    localStream.getTracks().forEach(track => {
-      pc.addTrack(track, localStream);
-    });
-  }
-
-  try {
-    await pc.setRemoteDescription(offer);
-    
-    // Create answer with enhanced options
-    const answer = await pc.createAnswer({
-      voiceActivityDetection: true
-    });
-    
-    await pc.setLocalDescription(answer);
-    
-    console.log(`📤 Sending answer to ${fromId}`);
-    ws.send(JSON.stringify({
-      type: 'answer',
-      answer: answer,
-      targetId: fromId
-    }));
-    
-  } catch (error) {
-    console.error(`❌ Error handling offer from ${fromId}:`, error);
-    
-    // Clean up failed connection
-    pc.close();
-    peerConnections.delete(fromId);
-    
-    // Notify the other peer to retry
-    ws.send(JSON.stringify({
-      type: 'connection-failed',
-      targetId: fromId
-    }));
-  }
-}
-
-// Handle incoming answer
-async function handleAnswer(fromId, answer) {
-  console.log(`📥 Handling answer from ${fromId}`);
-  
-  const pc = peerConnections.get(fromId);
-  if (pc) {
-    try {
-      await pc.setRemoteDescription(answer);
-    } catch (error) {
-      console.error(`❌ Error handling answer from ${fromId}:`, error);
-    }
-  }
-}
-
-// Handle incoming ICE candidate
-async function handleCandidate(fromId, candidate) {
-  console.log(`📥 Handling candidate from ${fromId}`);
-  
-  const pc = peerConnections.get(fromId);
-  if (pc) {
-    try {
-      await pc.addIceCandidate(candidate);
-    } catch (error) {
-      console.error(`❌ Error handling candidate from ${fromId}:`, error);
-    }
-  }
-}
-
-// Update connection stats
-function updateStats() {
-  let statsText = `Connected: ${peerConnections.size} peers\n`;
-  
-  peerConnections.forEach((pc, peerId) => {
-    const state = pc.connectionState;
-    const iceState = pc.iceConnectionState;
-    statsText += `${peerId.substring(0, 8)}: ${state}/${iceState}\n`;
-  });
-  
-  statsPanel.textContent = statsText;
-}
-
-// Update stats periodically
-setInterval(updateStats, 2000);
-  </script>
+  <!-- MediaPipe FaceMesh for eye-open detection -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
+  <script src="script.js"></script>
 </body>
 </html>

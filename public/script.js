@@ -113,14 +113,25 @@ class Participant {
     // Set up audio level monitoring for this participant
     this.setupAudioMonitoring(stream);
     
-    // Hide no-video placeholder when stream is available
-    const noVideo = this.tileElement.querySelector('.no-video');
-    if (stream && stream.getVideoTracks().length > 0) {
-      this.videoElement.style.display = 'block';
-      noVideo.style.display = 'none';
-    } else {
-      this.videoElement.style.display = 'none';
-      noVideo.style.display = 'flex';
+    // Only manage video/no-video display if not in audio-only mode
+    // In audio-only mode, the updateVideoDisplayForAudioOnly function handles this
+    if (currentVideoQuality !== 'AUDIO_ONLY' || this.isLocal) {
+      const noVideo = this.tileElement.querySelector('.no-video');
+      if (stream && stream.getVideoTracks().length > 0) {
+        // For local user, also check if video track is enabled and camera isn't off
+        const shouldShowVideo = !this.isLocal || (!isCameraOff && stream.getVideoTracks()[0].enabled);
+        
+        if (shouldShowVideo) {
+          this.videoElement.style.display = 'block';
+          noVideo.style.display = 'none';
+        } else {
+          this.videoElement.style.display = 'none';
+          noVideo.style.display = 'flex';
+        }
+      } else {
+        this.videoElement.style.display = 'none';
+        noVideo.style.display = 'flex';
+      }
     }
   }
   
@@ -573,7 +584,7 @@ function analyzeStats(stats, peerId) {
     metrics.jitter = inboundAudio.jitter || 0;
   }
   
-  // Determine overall network quality - be more realistic
+  // Determine overall network quality with audio-only fallback for severe conditions
   const totalBitrate = metrics.videoBitrate + metrics.audioBitrate;
   const totalPacketLoss = Math.max(metrics.videoPacketLoss, metrics.audioPacketLoss);
   
@@ -581,13 +592,26 @@ function analyzeStats(stats, peerId) {
   if (initialConnectionPhase) {
     metrics.quality = 'HIGH';
   } else {
-    // More realistic thresholds
-    if (totalPacketLoss > 5 || metrics.rtt > 300 || totalBitrate < BANDWIDTH_THRESHOLDS.LOW) {
+    // Enhanced thresholds - be smarter about audio-only decisions
+    
+    // For AUDIO_ONLY decisions, focus on connection quality (RTT/packet loss) not bitrate
+    // because low bitrate might be due to being in audio-only mode already
+    if (metrics.rtt > 500 || totalPacketLoss > 15) {
+      // Very poor connection quality: fallback to audio-only
+      metrics.quality = 'AUDIO_ONLY';
+      console.log(`📶 Network severely degraded for ${peerId}: rtt=${Math.round(metrics.rtt)}ms, loss=${totalPacketLoss.toFixed(1)}% - switching to audio-only`);
+    } else if (totalPacketLoss > 8 || metrics.rtt > 400 || (totalBitrate < BANDWIDTH_THRESHOLDS.LOW && totalBitrate > 60000)) {
+      // Poor conditions: low quality video (only consider low bitrate if it's above audio-only range)
       metrics.quality = 'LOW';
-    } else if (totalPacketLoss > 2 || metrics.rtt > 150 || totalBitrate < BANDWIDTH_THRESHOLDS.MEDIUM) {
+    } else if (totalPacketLoss > 3 || metrics.rtt > 200 || (totalBitrate < BANDWIDTH_THRESHOLDS.MEDIUM && totalBitrate > 60000)) {
+      // Moderate conditions: medium quality video (only consider low bitrate if it's above audio-only range)
       metrics.quality = 'MEDIUM';
-    } else {
+    } else if (totalPacketLoss < 2 && metrics.rtt < 150) {
+      // Good connection quality: allow high quality video
       metrics.quality = 'HIGH';
+    } else {
+      // Default to medium for uncertain conditions
+      metrics.quality = 'MEDIUM';
     }
   }
   
@@ -616,28 +640,48 @@ async function adaptToNetworkConditions() {
     maxRtt = Math.max(maxRtt, metrics.rtt);
     peerCount++;
     
-    if (metrics.quality === 'LOW') worstQuality = 'LOW';
+    // Update worst quality including AUDIO_ONLY
+    if (metrics.quality === 'AUDIO_ONLY') worstQuality = 'AUDIO_ONLY';
+    else if (metrics.quality === 'LOW' && worstQuality !== 'AUDIO_ONLY') worstQuality = 'LOW';
     else if (metrics.quality === 'MEDIUM' && worstQuality === 'HIGH') worstQuality = 'MEDIUM';
   });
   
   if (peerCount === 0) return;
   
-  // Only adapt if we have consistent bad quality across multiple measurement cycles
+  // Determine target quality based on network conditions
   let targetQuality = currentVideoQuality;
   
-  // Be more conservative - require multiple bad conditions
-  if (worstQuality === 'LOW' && maxPacketLoss > 10) {
-    targetQuality = 'AUDIO_ONLY';
-  } else if (worstQuality === 'MEDIUM' && maxPacketLoss > 7 && currentVideoQuality === 'HIGH') {
-    targetQuality = 'MEDIUM';
-  } else if (worstQuality === 'HIGH' && maxPacketLoss < 3 && currentVideoQuality !== 'HIGH') {
-    // Recovery condition - network has improved
-    targetQuality = 'HIGH';
+  // Enhanced adaptation logic with smarter audio-only recovery
+  if (worstQuality === 'AUDIO_ONLY' || maxPacketLoss > 15 || maxRtt > 3000) {
+  // 🚨 Severe network issues -> force audio-only
+  targetQuality = 'AUDIO_ONLY';
+
+} else if (currentVideoQuality === 'AUDIO_ONLY' && maxPacketLoss <= 10 && maxRtt <= 1000) {
+  // ✅ Recovery from audio-only: if connection quality is clearly better, upgrade slowly
+  targetQuality = 'LOW';
+
+} else if (worstQuality === 'LOW' || (maxPacketLoss > 8 || maxRtt > 500)) {
+  // ⚠️ Poor conditions but not severe enough for audio-only
+  if (currentVideoQuality !== 'AUDIO_ONLY') {
+    targetQuality = 'LOW';
   }
+
+} else if (worstQuality === 'MEDIUM' || (maxPacketLoss > 3 || maxRtt > 200)) {
+  // ➡️ Moderate conditions
+  if (currentVideoQuality === 'HIGH' || currentVideoQuality === 'LOW') {
+    targetQuality = 'MEDIUM';
+  }
+
+} else if ((worstQuality === 'HIGH' || currentVideoQuality !== 'HIGH') 
+           && maxPacketLoss < 2 && maxRtt < 150) {
+  // 🌟 Good conditions - can upgrade to high
+  targetQuality = 'HIGH';
+}
+
   
   // Only change quality if it's different from current
   if (targetQuality !== currentVideoQuality) {
-    console.log(`🔄 Network adaptation: ${currentVideoQuality} → ${targetQuality} (peers: ${peerCount}, loss: ${maxPacketLoss.toFixed(1)}%)`);
+    console.log(`🔄 Network adaptation: ${currentVideoQuality} → ${targetQuality} (peers: ${peerCount}, loss: ${maxPacketLoss.toFixed(1)}%, rtt: ${Math.round(maxRtt)}ms, bitrate: ${Math.round(totalBitrate/1000)}kbps)`);
     await adjustVideoQualityForAllPeers(targetQuality);
   }
 }
@@ -668,10 +712,14 @@ async function adjustVideoQuality(quality, sender) {
   
   try {
     if (quality === 'AUDIO_ONLY') {
-      // Disable video track for audio-only mode
+      // Disable video transmission but keep local video display
       sender.track.enabled = false;
-      console.log('📹 Switched to audio-only mode');
+      console.log('📹 Switched to audio-only mode - disabling video transmission');
       currentVideoQuality = 'AUDIO_ONLY';
+      
+      // Update UI to show audio-only state while preserving local video
+      updateVideoDisplayForAudioOnly(true);
+      
     } else {
       // Enable video and apply constraints
       sender.track.enabled = !isCameraOff; // Respect user's camera setting
@@ -707,10 +755,127 @@ async function adjustVideoQuality(quality, sender) {
       
       console.log(`📹 Adjusted video quality to ${quality}`);
       currentVideoQuality = quality;
+      
+      // Restore normal video display
+      updateVideoDisplayForAudioOnly(false);
     }
   } catch (error) {
     console.error('Error adjusting video quality:', error);
   }
+}
+
+// Update video display for audio-only mode
+function updateVideoDisplayForAudioOnly(isAudioOnly) {
+  participants.forEach((participant, participantId) => {
+    if (!participant.tileElement) return;
+    
+    const videoElement = participant.tileElement.querySelector('.participant-video');
+    const noVideoElement = participant.tileElement.querySelector('.no-video');
+    const infoElement = participant.tileElement.querySelector('.participant-info');
+    
+    if (participantId === 'local') {
+      console.log(`🎥 Updating local video display - Audio Only: ${isAudioOnly}, Camera Off: ${isCameraOff}, Has Stream: ${!!localStream}, Has Video Tracks: ${localStream ? localStream.getVideoTracks().length : 0}`);
+      
+      // Local participant: Always show their own video if camera is on and stream exists
+      if (!isCameraOff && localStream && localStream.getVideoTracks().length > 0) {
+        // For local display, we want to show video regardless of audio-only mode
+        // The video track might be disabled for transmission but should still display locally
+        
+        // Force video display for local user
+        videoElement.style.display = 'block';
+        noVideoElement.style.display = 'none';
+        
+        // Ensure the video element has the stream and try to play it
+        if (videoElement.srcObject !== localStream) {
+          videoElement.srcObject = localStream;
+          videoElement.play().catch(e => console.log('Video play error (usually safe to ignore):', e));
+        }
+        
+        console.log(`🎥 Local video should be visible: video element display = ${videoElement.style.display}`);
+        
+        // Add visual indicator that they're in audio-only mode
+        if (isAudioOnly) {
+          // Keep normal "You" text - just add subtle audio-only indicator
+          infoElement.textContent = 'You';
+          infoElement.style.background = 'rgba(0,0,0,0.7)'; // Keep normal background
+          
+          // Add subtle top-right indicator that video transmission is off
+          if (!participant.tileElement.querySelector('.audio-only-overlay')) {
+            const overlay = document.createElement('div');
+            overlay.className = 'audio-only-overlay';
+            overlay.innerHTML = `
+              <div style="
+                position: absolute;
+                top: 10px;
+                right: 10px;
+                background: rgba(255, 152, 0, 0.9);
+                color: white;
+                padding: 3px 6px;
+                border-radius: 12px;
+                font-size: 10px;
+                font-weight: bold;
+                z-index: 10;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+              ">🎵 Not Transmitting</div>
+            `;
+            participant.tileElement.appendChild(overlay);
+          }
+        } else {
+          // Remove audio-only indicators when not in audio-only mode
+          infoElement.textContent = 'You';
+          infoElement.style.background = 'rgba(0,0,0,0.7)';
+          
+          const overlay = participant.tileElement.querySelector('.audio-only-overlay');
+          if (overlay) overlay.remove();
+        }
+      } else {
+        // Camera is off - show no-video placeholder
+        videoElement.style.display = 'none';
+        noVideoElement.style.display = 'flex';
+        infoElement.textContent = isCameraOff ? 'You (Camera Off)' : 'You';
+        
+        console.log(`🎥 Local video hidden - Camera off: ${isCameraOff}`);
+        
+        // Remove overlay if camera is off
+        const overlay = participant.tileElement.querySelector('.audio-only-overlay');
+        if (overlay) overlay.remove();
+      }
+      
+    } else {
+      // Remote participants: Black out their video in audio-only mode
+      if (isAudioOnly) {
+        videoElement.style.display = 'none';
+        noVideoElement.style.display = 'flex';
+        noVideoElement.innerHTML = `
+          <div style="
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            text-align: center;
+          ">
+            <div style="font-size: 48px; margin-bottom: 10px;">🎵</div>
+            <div style="font-size: 14px;">Audio Only</div>
+          </div>
+        `;
+        infoElement.style.background = 'rgba(255, 152, 0, 0.8)'; // Orange
+        
+      } else {
+        // Normal mode - show video if available
+        if (participant.stream && participant.stream.getVideoTracks().length > 0) {
+          videoElement.style.display = 'block';
+          noVideoElement.style.display = 'none';
+          noVideoElement.innerHTML = '👤'; // Reset to default
+        } else {
+          videoElement.style.display = 'none';
+          noVideoElement.style.display = 'flex';
+          noVideoElement.innerHTML = '👤';
+        }
+        infoElement.style.background = 'rgba(0,0,0,0.7)'; // Default
+      }
+    }
+  });
 }
 
 function updateNetworkIndicators() {
@@ -722,7 +887,9 @@ function updateNetworkIndicators() {
   let peerCount = 0;
   
   networkStats.forEach((metrics, peerId) => {
-    if (metrics.quality === 'LOW') worstQuality = 'LOW';
+    // Handle AUDIO_ONLY as the worst quality level
+    if (metrics.quality === 'AUDIO_ONLY') worstQuality = 'AUDIO_ONLY';
+    else if (metrics.quality === 'LOW' && worstQuality !== 'AUDIO_ONLY') worstQuality = 'LOW';
     else if (metrics.quality === 'MEDIUM' && worstQuality === 'HIGH') worstQuality = 'MEDIUM';
     
     totalBitrate += metrics.videoBitrate + metrics.audioBitrate;
@@ -739,13 +906,14 @@ function updateNetworkIndicators() {
   // Update network quality indicator if it exists
   if (networkQualityIndicator) {
     const qualityColors = {
-      HIGH: '#28a745',    // Green
-      MEDIUM: '#ffc107',  // Yellow
-      LOW: '#dc3545',     // Red
-      OFFLINE: '#6c757d'  // Gray
+      HIGH: '#28a745',        // Green
+      MEDIUM: '#ffc107',      // Yellow
+      LOW: '#dc3545',         // Red
+      AUDIO_ONLY: '#ff9800',  // Orange
+      OFFLINE: '#6c757d'      // Gray
     };
     
-    networkQualityIndicator.style.color = qualityColors[worstQuality];
+    networkQualityIndicator.style.color = qualityColors[worstQuality] || qualityColors.OFFLINE;
     networkQualityIndicator.textContent = `📶 ${worstQuality}`;
   }
   
@@ -771,7 +939,8 @@ function updateNetworkStats(totalBitrate, avgPacketLoss, avgRtt) {
   let overallQuality = 'HIGH';
   if (networkStats.size > 0) {
     networkStats.forEach((metrics) => {
-      if (metrics.quality === 'LOW') overallQuality = 'LOW';
+      if (metrics.quality === 'AUDIO_ONLY') overallQuality = 'AUDIO_ONLY';
+      else if (metrics.quality === 'LOW' && overallQuality !== 'AUDIO_ONLY') overallQuality = 'LOW';
       else if (metrics.quality === 'MEDIUM' && overallQuality === 'HIGH') overallQuality = 'MEDIUM';
     });
   }
@@ -973,6 +1142,11 @@ joinBtn.onclick = async () => {
     localParticipant.setStream(localStream);
     participants.set('local', localParticipant);
     
+    // If we're already in audio-only mode, make sure local video is displayed correctly
+    if (currentVideoQuality === 'AUDIO_ONLY') {
+      setTimeout(() => updateVideoDisplayForAudioOnly(true), 100);
+    }
+    
     // Initialize connection timing
     connectionStartTime = Date.now();
     initialConnectionPhase = true;
@@ -1080,6 +1254,11 @@ cameraBtn.onclick = () => {
       const localParticipant = participants.get('local');
       if (localParticipant) {
         localParticipant.setStream(localStream);
+        
+        // If in audio-only mode, update the display to reflect camera state
+        if (currentVideoQuality === 'AUDIO_ONLY') {
+          updateVideoDisplayForAudioOnly(true);
+        }
       }
     }
   }

@@ -162,17 +162,54 @@ params.encodings[0].priority = 'medium';
 
 ## �️ Activity Detection System
 
-### Eye Aspect Ratio (EAR) Algorithm
+### �️ Activity Detection System
+
+### Eye Aspect Ratio (EAR) Algorithm with Distance Normalization
 ```javascript
 // Detection thresholds
-const EYE_EAR_THRESHOLD = 0.30; // Higher threshold detects closures sooner
+const EYE_EAR_THRESHOLD = 0.30; // Normalized threshold (distance-independent)
 const SLEEP_MS = 800;           // Time before marking as 'slept' 
 const WAKE_MS = 250;            // Time before marking as 'active'
 const GONE_MS = 3000;           // Time with no face before marking as 'gone'
 
-// MediaPipe FaceMesh eye landmarks
-const LEFT_EYE = [33, 160, 158, 133, 153, 144];
-const RIGHT_EYE = [362, 385, 387, 263, 373, 380];
+// Distance-normalized EAR calculation
+function computeNormalizedEAR(landmarks, leftEye, rightEye) {
+  const rawEAR = (computeEAR(landmarks, leftEye) + computeEAR(landmarks, rightEye)) / 2;
+  
+  // Calculate face size using nose tip, chin, and face boundaries
+  const faceSize = calculateFaceSize(landmarks);
+  const normalizationFactor = Math.max(0.5, Math.min(2.0, faceSize / 0.15));
+  
+  return rawEAR / normalizationFactor; // Distance-independent EAR
+}
+```
+
+### Distance-Adaptive Detection
+**Problem Solved**: Traditional EAR fails when users move closer/farther from camera
+- **Close to camera**: Face landmarks spread out → Higher EAR values
+- **Far from camera**: Face landmarks compressed → Lower EAR values  
+- **Fixed threshold**: Causes false positives/negatives with distance changes
+
+**Solution**: Face-size normalized EAR calculation
+- **Face size estimation**: Uses nose tip, chin, and face boundary landmarks
+- **Dynamic normalization**: Adjusts EAR based on detected face size
+- **Distance independence**: Same threshold (0.30) works at any distance
+- **Robust tracking**: Lower detection thresholds (0.4/0.3) for distant faces
+
+### MediaPipe FaceMesh Integration
+```javascript
+// Enhanced MediaPipe configuration
+fm.setOptions({
+  maxNumFaces: 1,
+  refineLandmarks: true,
+  minDetectionConfidence: 0.4,  // Better distant face detection
+  minTrackingConfidence: 0.3,   // Smoother tracking continuity
+  staticImageMode: false        // Optimized for video streams
+});
+
+// Eye landmarks (MediaPipe FaceMesh indices)
+const LEFT_EYE = [33, 160, 158, 133, 153, 144];   // 6 key points around left eye
+const RIGHT_EYE = [362, 385, 387, 263, 373, 380]; // 6 key points around right eye
 ```
 
 ### Activity Status Logic
@@ -260,17 +297,50 @@ broadcastActivityStatus(status) {
 
 ## 🛡️ Connection Resilience
 
-### ICE Configuration
+### ICE Configuration for Long-Distance Connections
 ```javascript
 iceServers: [
+  // STUN servers for NAT discovery
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
   { urls: 'stun:stun2.l.google.com:19302' },
   { urls: 'stun:stun.services.mozilla.com' },
   { urls: 'stun:stun.stunprotocol.org:3478' },
-  { urls: 'stun:openrelay.metered.ca:80' }
+  
+  // TURN servers for long-distance/complex NAT scenarios
+  {
+    urls: 'turn:openrelay.metered.ca:80',
+    username: 'openrelayproject',
+    credential: 'openrelayproject'
+  },
+  {
+    urls: 'turn:openrelay.metered.ca:443', 
+    username: 'openrelayproject',
+    credential: 'openrelayproject'
+  },
+  {
+    urls: 'turn:relay1.expressturn.com:3478',
+    username: 'efSLANXAY9TzMa3crbhd', 
+    credential: 'StkKGS6j18fnddAdH7W7'
+  }
 ]
 ```
+
+### 🌍 Long-Distance Connection Support
+
+**Updated for 400km+ connections between different cities/ISPs:**
+
+- **STUN Servers**: Discover public IP addresses and NAT types
+- **TURN Servers**: Relay traffic when direct P2P fails
+- **Multiple Protocols**: TCP and UDP support for firewall traversal  
+- **Free TURN Services**: Using OpenRelay and ExpressTURN public servers
+
+### Connection Types Supported
+- ✅ **Same Network** (0-1km): Direct P2P via STUN
+- ✅ **Different Networks, Same ISP** (1-50km): STUN + basic NAT traversal
+- ✅ **Different Cities/ISPs** (50km+): TURN relay when P2P fails
+- ✅ **Corporate/Mobile Networks**: TURN over TCP/443 for firewall bypass
+- ✅ **Symmetric NAT**: TURN relay handles complex NAT scenarios
 
 ### Error Handling & Recovery
 - **Connection timeout**: 15-second limit with automatic retry
@@ -319,26 +389,222 @@ const SPEAKER_UPDATE_INTERVAL = 200; // ms
 
 ## 🚀 Getting Started
 
+### 📁 Project Structure
+
+```
+webrtc-demo/
+├── 📄 README.md                    # 📖 This comprehensive documentation
+├── 📄 package.json                 # 🔴 REQUIRED: Node.js dependencies (Express, WebSocket)
+├── 📄 package-lock.json           # 🔴 REQUIRED: Dependency version lock
+├── 📄 server.js                   # 🔴 REQUIRED: Main WebSocket server (port 3000)
+├── 📄 .gitignore                  # 🟡 OPTIONAL: Git ignore patterns
+├── 📄 tunnel-alternative.js       # 🟢 UNUSED: Alternative tunneling setup (can delete)
+├── 📁 node_modules/               # 🔴 REQUIRED: NPM dependencies (auto-generated)
+│
+└── 📁 public/                     # Client-side files (served by Express)
+    ├── 🌐 index.html              # 🔴 REQUIRED: Main application UI (Google Meet style)
+    ├── ⚡ script.js               # 🔴 REQUIRED: Enhanced WebRTC with activity detection
+    │
+    ├── 📜 Legacy Files (can be safely deleted):
+    ├── ⚡ script_adaptive.js      # 🟢 BACKUP: Network adaptation version
+    ├── ⚡ script_enhanced.js      # 🟢 BACKUP: Enhanced version backup  
+    ├── ⚡ script_original_backup.js # 🟢 BACKUP: Original implementation
+    │
+    └── 📜 Integrated Source Files (can be safely deleted):
+        ├── 🌐 sentimental-index.html   # 🟢 SOURCE: Original activity detection UI
+        └── ⚡ sentimental-script.js    # 🟢 SOURCE: Original activity detection logic
+```
+
+### 🎯 File Priority Guide
+
+| Status | Files | Purpose | Action |
+|--------|-------|---------|---------|
+| 🔴 **CRITICAL** | `server.js`, `package.json`, `package-lock.json`, `public/index.html`, `public/script.js`, `node_modules/` | Core application functionality | **MUST KEEP** |
+| 🟡 **HELPFUL** | `README.md`, `.gitignore` | Documentation and Git management | **RECOMMENDED** |
+| 🟢 **OPTIONAL** | `script_*.js`, `sentimental-*`, `tunnel-alternative.js` | Development history and unused code | **CAN DELETE** |
+
+### 🧹 Cleanup Commands (Optional)
+
+If you want to clean up the project, run these commands to remove optional files:
+
+```powershell
+# Remove backup script versions (features already integrated into script.js)
+Remove-Item public\script_adaptive.js
+Remove-Item public\script_enhanced.js  
+Remove-Item public\script_original_backup.js
+
+# Remove original source files (features already integrated)
+Remove-Item public\sentimental-index.html
+Remove-Item public\sentimental-script.js
+
+# Remove unused alternative setup
+Remove-Item tunnel-alternative.js
+```
+
+### 🔧 Key Files Explained
+
+#### **Core Application Files**
+| File | Purpose | Key Features |
+|------|---------|--------------|
+| `server.js` | WebSocket server | Real-time communication, room management |
+| `public/index.html` | Main UI | Google Meet styling, responsive grid layout |
+| `public/script.js` | Main logic | WebRTC + Network adaptation + Activity detection |
+
+#### **Enhanced Features Integration**
+- **Activity Detection**: Integrated from `sentimental-*` files into main app
+- **Network Adaptation**: Advanced bandwidth management and quality adjustment  
+- **Audio-Only Transmission**: Continues activity detection via data channels
+- **Multi-State Detection**: Active (🙂), Slept (😴), Gone (👻), Checking (⏳)
+
+#### **Configuration Files**
+- **`package.json`**: Dependencies (Express 5.1.0, WebSocket 8.18.3)
+- **`server.js`**: WebSocket server on port 3000 with room management
+- **`.gitignore`**: Excludes node_modules and environment files
+
+### 🔄 Data Flow Architecture
+
+```mermaid
+graph TB
+    subgraph "Client A Browser"
+        A1[index.html] --> A2[script.js]
+        A2 --> A3[MediaPipe FaceMesh]
+        A2 --> A4[WebRTC PeerConnection]
+        A3 --> A5[Activity Status: Active/Slept/Gone]
+    end
+    
+    subgraph "Server (port 3000)"
+        S1[server.js] --> S2[WebSocket Handler]
+        S2 --> S3[Room Management]
+    end
+    
+    subgraph "Client B Browser"
+        B1[index.html] --> B2[script.js]
+        B2 --> B3[MediaPipe FaceMesh]
+        B2 --> B4[WebRTC PeerConnection]
+        B3 --> B5[Activity Status: Active/Slept/Gone]
+    end
+    
+    A2 -.->|WebSocket Signaling| S2
+    B2 -.->|WebSocket Signaling| S2
+    A4 <-->|Direct P2P WebRTC| B4
+    A4 -->|Data Channel| B4
+    A5 -.->|Activity Status| B2
+    B5 -.->|Activity Status| A2
+    
+    style A3 fill:#e1f5fe
+    style B3 fill:#e1f5fe
+    style S1 fill:#f3e5f5
+    style A4 fill:#e8f5e8
+    style B4 fill:#e8f5e8
+```
+
 ### Prerequisites
+- **Node.js** (v14 or higher) - [Download here](https://nodejs.org/)
 - **Modern web browser** with WebRTC support (Chrome, Firefox, Safari, Edge)
 - **Camera and microphone** access permissions
 - **HTTPS/Local server** required for WebRTC security
 - **Internet connection** for MediaPipe FaceMesh CDN access
 - **Multiple devices** recommended for testing full WebRTC functionality
 
-### Quick Start (Single Device Testing)
+### 🚀 Quick Start (Single Device Testing)
+
+1. **Install dependencies** (already done if you see node_modules folder):
 ```bash
-# Clone the repository
-git clone <your-repo-url>
-cd webrtc-demo
-
-# Start the WebSocket server
 npm install
-npm start
-
-# Server will run on http://localhost:3000
-# Open multiple browser tabs to test locally
 ```
+
+2. **Start the WebSocket server**:
+```bash
+node server.js
+```
+
+3. **Open application**:
+   - Go to `http://localhost:3000`
+   - Open multiple browser tabs to test locally
+   - Allow camera/microphone permissions when prompted
+
+### ✅ Verification Steps
+
+After running `node server.js`, you should see:
+```
+Server running on port 3000
+WebSocket server ready
+Express server serving static files from public/
+```
+
+**Test the application**:
+- Open `http://localhost:3000` in two browser tabs
+- Click "Join Room" in both tabs
+- You should see both video feeds and activity detection working
+
+### 🔧 Troubleshooting
+
+**Server won't start?**
+```bash
+# Check if port 3000 is in use
+netstat -an | findstr :3000
+
+# Try a different port
+set PORT=3001 && node server.js
+```
+
+**Dependencies missing?**
+```bash
+# Reinstall dependencies
+rm -rf node_modules package-lock.json
+npm install
+```
+
+### 🎛️ Setup Options
+
+#### **Minimal Setup** (4 files only)
+For basic functionality, you only need:
+```
+webrtc-demo/
+├── 📄 package.json       # Dependencies
+├── 📄 server.js         # WebSocket server  
+└── 📁 public/
+    ├── index.html       # UI
+    └── script.js        # WebRTC logic
+```
+
+#### **Full Development Setup** (all files)
+Includes documentation, backups, and source files:
+```
+webrtc-demo/
+├── All core files above
+├── 📄 README.md         # This documentation
+├── 📄 .gitignore        # Git configuration
+├── Multiple script_*.js # Development versions
+└── sentimental-*        # Original source files
+```
+
+### 🌍 **Long-Distance Testing (400km+ Solution)**
+
+**Problem**: Connections fail between different cities/ISPs due to complex NAT/firewall scenarios.
+
+**Solution**: Updated ICE configuration now includes TURN servers for relay connections.
+
+#### **Testing Long-Distance Connections**
+1. **Start server** with port forwarding (ngrok/VS Code)
+2. **Share the public URL** with someone 400km+ away
+3. **Both join the meeting** from your respective locations
+4. **Check browser console** for connection type:
+   - `⚡ Connected via direct P2P` (ideal)
+   - `🔄 Connected via TURN relay` (works for long-distance)
+
+#### **What Changed**
+- ✅ **Added TURN servers**: Free relay servers for complex NAT scenarios
+- ✅ **Multiple protocols**: TCP/UDP on ports 80/443 for firewall bypass
+- ✅ **Enhanced debugging**: Console shows P2P vs TURN relay usage
+- ✅ **Automatic fallback**: Tries P2P first, TURN if needed
+
+#### **Expected Behavior**
+- **Local/nearby**: Direct P2P connection (faster)
+- **Long-distance**: May use TURN relay (still works, slightly higher latency)
+- **Corporate networks**: TURN over port 443 bypasses firewalls
+
+**Recommendation**: Keep all files for now, delete optional ones later if needed.
 
 ### Multi-Device Setup (Recommended)
 
@@ -442,10 +708,59 @@ npm start
 - **Network**: Devices must reach the server
 - **HTTPS for remote**: Use ngrok or VS Code forwarding for external access
 
+#### ❌ "Long-distance connections fail (400km+)"
+- **TURN servers enabled**: Latest version includes free TURN servers
+- **Corporate networks**: TURN over port 443 bypasses most firewalls
+- **Symmetric NAT**: TURN servers handle complex NAT scenarios automatically
+- **Connection timeout**: Allow up to 30 seconds for TURN relay establishment
+- **Test with browser console**: Check for ICE connection state logs
+
+#### 🔍 **Debug Long-Distance Issues**
+Open browser console (F12) and look for:
+```javascript
+// Good signs:
+"ICE connection state: connected"
+"Using TURN relay candidate"
+"Peer connection established via relay"
+
+// Problem indicators:
+"ICE connection state: failed" 
+"All candidates failed"
+"TURN server authentication failed"
+```
+
 #### ❌ "Activity detection not working"
 - **MediaPipe loading**: Check browser console for CDN errors
 - **Face visibility**: Ensure face is well-lit and visible
 - **Camera permissions**: Activity detection requires video access
+
+#### ❌ "Asymmetric audio issues (they hear you but you can't hear them, or vice versa)"
+- **Enhanced audio debugging**: Press `Ctrl+Alt+D` or run `diagnoseAudioIssues()` in console
+- **Check microphone permissions**: Browser may have different permissions for each site
+- **Audio track states**: Console shows detailed audio track information for both directions
+- **TURN relay audio**: Audio may work differently over TURN vs P2P connections
+- **Browser-specific issues**: Try different browsers (Chrome/Firefox/Safari) to isolate
+- **Network firewall**: Some corporate firewalls block specific RTP ports for audio vs video
+
+#### 🔍 **Debug Asymmetric Audio Issues**
+**Console commands for audio debugging**:
+```javascript
+// Run comprehensive audio diagnosis
+diagnoseAudioIssues()
+
+// Check if local microphone is working
+navigator.mediaDevices.getUserMedia({audio: true}).then(s => console.log('Mic works', s))
+
+// Check audio constraints
+localStream?.getAudioTracks().forEach(t => console.log(t.getSettings()))
+```
+
+**Browser console will show**:
+- Microphone permissions state
+- Local audio track status (enabled/muted/readyState)
+- Audio senders/receivers for each peer connection  
+- Audio element states for all participants
+- Inbound/outbound audio statistics
 
 ### 🧪 Testing Activity Detection Features
 

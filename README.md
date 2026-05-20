@@ -1,4 +1,18 @@
-# WebRTC Video Conferenc### 👁️ Activity Detection (Awake/Asleep/Gone)
+# WebRTC Video Conferenc### ### 🎵 Active Speaker Detection
+- **Web Audio API integration** for real-time audio level monitoring
+- **Visual highlighting** of active speakers with blue borders
+- **Bandwidth optimization** prioritizing active speakers
+- **3-person layout optimization** with main speaker positioning
+
+### 🖥️ Screen Sharing
+- **One-click screen sharing** with getDisplayMedia API
+- **Automatic track replacement** in peer connections
+- **Visual indicators** showing who is sharing screen
+- **System audio capture** (when supported by browser)
+- **Seamless camera restoration** when screen sharing stops
+- **Browser stop detection** handles user stopping via browser controls
+
+### 👁️ Activity Detection (Awake/Asleep/Gone)ivity Detection (Awake/Asleep/Gone)
 - **MediaPipe FaceMesh integration** for real-time eye tracking
 - **Eye Aspect Ratio (EAR) calculation** to detect eye closure
 - **Presence detection** to identify when participants have left their camera
@@ -260,17 +274,50 @@ broadcastActivityStatus(status) {
 
 ## 🛡️ Connection Resilience
 
-### ICE Configuration
+### ICE Configuration for Long-Distance Connections
 ```javascript
 iceServers: [
+  // STUN servers for NAT discovery
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
   { urls: 'stun:stun2.l.google.com:19302' },
   { urls: 'stun:stun.services.mozilla.com' },
   { urls: 'stun:stun.stunprotocol.org:3478' },
-  { urls: 'stun:openrelay.metered.ca:80' }
+  
+  // TURN servers for long-distance/complex NAT scenarios
+  {
+    urls: 'turn:openrelay.metered.ca:80',
+    username: 'openrelayproject',
+    credential: 'openrelayproject'
+  },
+  {
+    urls: 'turn:openrelay.metered.ca:443', 
+    username: 'openrelayproject',
+    credential: 'openrelayproject'
+  },
+  {
+    urls: 'turn:relay1.expressturn.com:3478',
+    username: 'efSLANXAY9TzMa3crbhd', 
+    credential: 'StkKGS6j18fnddAdH7W7'
+  }
 ]
 ```
+
+### 🌍 Long-Distance Connection Support
+
+**Updated for 400km+ connections between different cities/ISPs:**
+
+- **STUN Servers**: Discover public IP addresses and NAT types
+- **TURN Servers**: Relay traffic when direct P2P fails
+- **Multiple Protocols**: TCP and UDP support for firewall traversal  
+- **Free TURN Services**: Using OpenRelay and ExpressTURN public servers
+
+### Connection Types Supported
+- ✅ **Same Network** (0-1km): Direct P2P via STUN
+- ✅ **Different Networks, Same ISP** (1-50km): STUN + basic NAT traversal
+- ✅ **Different Cities/ISPs** (50km+): TURN relay when P2P fails
+- ✅ **Corporate/Mobile Networks**: TURN over TCP/443 for firewall bypass
+- ✅ **Symmetric NAT**: TURN relay handles complex NAT scenarios
 
 ### Error Handling & Recovery
 - **Connection timeout**: 15-second limit with automatic retry
@@ -289,8 +336,16 @@ iceServers: [
 ### Control Interface
 - **Join/Leave buttons**: One-click meeting access
 - **Audio/Video toggles**: Instant mute/unmute functionality
+- **Screen sharing button**: One-click desktop/window/tab sharing with 🖥️ icon
 - **Adaptive mode control**: Manual override for network adaptation
 - **Stats panel**: Real-time network information display
+
+### Visual Feedback
+- **Connection status colors**: Green (connected), Yellow (connecting), Red (failed)
+- **Quality indicators**: Color-coded network status with emoji icons  
+- **Participant info**: Hover effects and connection state display
+- **Mute indicators**: Visual feedback for audio/video states
+- **Screen sharing indicators**: Green "🖥️ Sharing Screen" badge on participant tiles
 
 ## 🔧 Configuration Options
 
@@ -509,6 +564,31 @@ webrtc-demo/
 └── sentimental-*        # Original source files
 ```
 
+### 🌍 **Long-Distance Testing (400km+ Solution)**
+
+**Problem**: Connections fail between different cities/ISPs due to complex NAT/firewall scenarios.
+
+**Solution**: Updated ICE configuration now includes TURN servers for relay connections.
+
+#### **Testing Long-Distance Connections**
+1. **Start server** with port forwarding (ngrok/VS Code)
+2. **Share the public URL** with someone 400km+ away
+3. **Both join the meeting** from your respective locations
+4. **Check browser console** for connection type:
+   - `⚡ Connected via direct P2P` (ideal)
+   - `🔄 Connected via TURN relay` (works for long-distance)
+
+#### **What Changed**
+- ✅ **Added TURN servers**: Free relay servers for complex NAT scenarios
+- ✅ **Multiple protocols**: TCP/UDP on ports 80/443 for firewall bypass
+- ✅ **Enhanced debugging**: Console shows P2P vs TURN relay usage
+- ✅ **Automatic fallback**: Tries P2P first, TURN if needed
+
+#### **Expected Behavior**
+- **Local/nearby**: Direct P2P connection (faster)
+- **Long-distance**: May use TURN relay (still works, slightly higher latency)
+- **Corporate networks**: TURN over port 443 bypasses firewalls
+
 **Recommendation**: Keep all files for now, delete optional ones later if needed.
 
 ### Multi-Device Setup (Recommended)
@@ -613,10 +693,59 @@ npm start
 - **Network**: Devices must reach the server
 - **HTTPS for remote**: Use ngrok or VS Code forwarding for external access
 
+#### ❌ "Long-distance connections fail (400km+)"
+- **TURN servers enabled**: Latest version includes free TURN servers
+- **Corporate networks**: TURN over port 443 bypasses most firewalls
+- **Symmetric NAT**: TURN servers handle complex NAT scenarios automatically
+- **Connection timeout**: Allow up to 30 seconds for TURN relay establishment
+- **Test with browser console**: Check for ICE connection state logs
+
+#### 🔍 **Debug Long-Distance Issues**
+Open browser console (F12) and look for:
+```javascript
+// Good signs:
+"ICE connection state: connected"
+"Using TURN relay candidate"
+"Peer connection established via relay"
+
+// Problem indicators:
+"ICE connection state: failed" 
+"All candidates failed"
+"TURN server authentication failed"
+```
+
 #### ❌ "Activity detection not working"
 - **MediaPipe loading**: Check browser console for CDN errors
 - **Face visibility**: Ensure face is well-lit and visible
 - **Camera permissions**: Activity detection requires video access
+
+#### ❌ "Asymmetric audio issues (they hear you but you can't hear them, or vice versa)"
+- **Enhanced audio debugging**: Press `Ctrl+Alt+D` or run `diagnoseAudioIssues()` in console
+- **Check microphone permissions**: Browser may have different permissions for each site
+- **Audio track states**: Console shows detailed audio track information for both directions
+- **TURN relay audio**: Audio may work differently over TURN vs P2P connections
+- **Browser-specific issues**: Try different browsers (Chrome/Firefox/Safari) to isolate
+- **Network firewall**: Some corporate firewalls block specific RTP ports for audio vs video
+
+#### 🔍 **Debug Asymmetric Audio Issues**
+**Console commands for audio debugging**:
+```javascript
+// Run comprehensive audio diagnosis
+diagnoseAudioIssues()
+
+// Check if local microphone is working
+navigator.mediaDevices.getUserMedia({audio: true}).then(s => console.log('Mic works', s))
+
+// Check audio constraints
+localStream?.getAudioTracks().forEach(t => console.log(t.getSettings()))
+```
+
+**Browser console will show**:
+- Microphone permissions state
+- Local audio track status (enabled/muted/readyState)
+- Audio senders/receivers for each peer connection  
+- Audio element states for all participants
+- Inbound/outbound audio statistics
 
 ### 🧪 Testing Activity Detection Features
 

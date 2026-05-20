@@ -7,6 +7,8 @@ let localStream;
 let myId;
 let isMicMuted = false;
 let isCameraOff = false;
+let isScreenSharing = false;
+let originalCameraStream = null; // Store original camera stream for reverting
 const participants = new Map(); // Store participant data
 const peerConnections = new Map(); // Store WebRTC connections
 
@@ -44,6 +46,7 @@ const joinBtn = document.getElementById('joinBtn');
 const leaveBtn = document.getElementById('leaveBtn');
 const micBtn = document.getElementById('micBtn');
 const cameraBtn = document.getElementById('cameraBtn');
+const shareBtn = document.getElementById('shareBtn');
 const statsPanel = document.getElementById('connectionStats');
 
 // Network monitoring elements (will be created dynamically)
@@ -82,6 +85,149 @@ function computeEAR(landmarks, eye) {
   const horizontal = euclideanDistance(p1, p4);
   if (horizontal === 0) return 0;
   return (vertical1 + vertical2) / (2 * horizontal);
+}
+
+// Screen sharing functions
+async function startScreenShare() {
+  try {
+    console.log('🖥️ Starting screen share...');
+    
+    // Get screen capture stream
+    const screenStream = await navigator.mediaDevices.getDisplayMedia({
+      video: {
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+        frameRate: { ideal: 30 }
+      },
+      audio: true // Include system audio if available
+    });
+
+    // Store original camera stream before replacing
+    if (localStream && !originalCameraStream) {
+      originalCameraStream = localStream;
+    }
+
+    // Combine screen video with original audio (microphone)
+    const audioTrack = originalCameraStream ? originalCameraStream.getAudioTracks()[0] : null;
+    const screenVideoTrack = screenStream.getVideoTracks()[0];
+    
+    // Create new stream with screen video and microphone audio
+    const combinedTracks = [screenVideoTrack];
+    if (audioTrack) {
+      combinedTracks.push(audioTrack);
+    }
+    
+    localStream = new MediaStream(combinedTracks);
+    
+    // Update local video display and show screen sharing indicator
+    const localParticipant = participants.get(myId);
+    if (localParticipant) {
+      localParticipant.setStream(localStream);
+      // Show screen sharing indicator
+      if (localParticipant.shareIndicator) {
+        localParticipant.shareIndicator.style.display = 'block';
+      }
+    }
+
+    // Replace video tracks in all peer connections
+    await replaceVideoTrackInConnections(screenVideoTrack);
+    
+    // Update UI
+    isScreenSharing = true;
+    shareBtn.textContent = '🛑';
+    shareBtn.className = 'control-btn sharing';
+    shareBtn.title = 'Stop Screen Share';
+    
+    // Listen for screen share ending (user clicks browser's stop sharing button)
+    screenVideoTrack.onended = () => {
+      console.log('🖥️ Screen sharing ended by user');
+      stopScreenShare();
+    };
+
+    console.log('✅ Screen sharing started');
+    
+  } catch (error) {
+    console.error('❌ Error starting screen share:', error);
+    
+    // Show user-friendly error message
+    let errorMessage = 'Screen sharing failed. ';
+    if (error.name === 'NotAllowedError') {
+      errorMessage += 'Please allow screen sharing permissions.';
+    } else if (error.name === 'NotSupportedError') {
+      errorMessage += 'Screen sharing is not supported in this browser.';
+    } else {
+      errorMessage += 'Please try again.';
+    }
+    
+    alert(errorMessage);
+  }
+}
+
+async function stopScreenShare() {
+  try {
+    console.log('🖥️ Stopping screen share...');
+    
+    if (!originalCameraStream) {
+      console.warn('⚠️ No original camera stream to restore');
+      return;
+    }
+
+    // Stop current screen stream
+    if (localStream) {
+      localStream.getVideoTracks().forEach(track => {
+        if (track.kind === 'video') {
+          track.stop();
+        }
+      });
+    }
+
+    // Restore original camera stream
+    localStream = originalCameraStream;
+    originalCameraStream = null;
+    
+    // Update local video display and hide screen sharing indicator
+    const localParticipant = participants.get(myId);
+    if (localParticipant) {
+      localParticipant.setStream(localStream);
+      // Hide screen sharing indicator
+      if (localParticipant.shareIndicator) {
+        localParticipant.shareIndicator.style.display = 'none';
+      }
+    }
+
+    // Replace video tracks in all peer connections with camera
+    const videoTrack = localStream.getVideoTracks()[0];
+    if (videoTrack) {
+      await replaceVideoTrackInConnections(videoTrack);
+    }
+    
+    // Update UI
+    isScreenSharing = false;
+    shareBtn.textContent = '🖥️';
+    shareBtn.className = 'control-btn';
+    shareBtn.title = 'Share Screen';
+    
+    console.log('✅ Screen sharing stopped, camera restored');
+    
+  } catch (error) {
+    console.error('❌ Error stopping screen share:', error);
+  }
+}
+
+async function replaceVideoTrackInConnections(newVideoTrack) {
+  console.log(`🔄 Replacing video track in ${peerConnections.size} connections`);
+  
+  for (const [peerId, pc] of peerConnections) {
+    try {
+      const sender = pc.getSenders().find(s => s.track?.kind === 'video');
+      if (sender) {
+        await sender.replaceTrack(newVideoTrack);
+        console.log(`✅ Video track replaced for ${peerId}`);
+      }
+    } catch (error) {
+      console.error(`❌ Error replacing video track for ${peerId}:`, error);
+    }
+  }
 }
 
 // Participant class to manage individual participants
@@ -127,6 +273,13 @@ class Participant {
     activityElement.textContent = '⏳ Checking...';
     this.activityElement = activityElement;
 
+    // Create screen sharing indicator
+    const shareIndicator = document.createElement('div');
+    shareIndicator.className = 'share-indicator';
+    shareIndicator.textContent = '🖥️ Sharing Screen';
+    shareIndicator.style.display = 'none';
+    this.shareIndicator = shareIndicator;
+
     // Create no-video placeholder
     const noVideoElement = document.createElement('div');
     noVideoElement.className = 'no-video';
@@ -135,6 +288,7 @@ class Participant {
     this.tileElement.appendChild(this.videoElement);
     this.tileElement.appendChild(noVideoElement);
     this.tileElement.appendChild(activityElement);
+    this.tileElement.appendChild(shareIndicator);
     this.tileElement.appendChild(infoElement);
     
     videoGrid.appendChild(this.tileElement);
@@ -612,6 +766,85 @@ async function optimizeBandwidthForParticipant(participantId, isActiveSpeaker) {
 }
 
 // Network monitoring and adaptation functions
+
+// Diagnose asymmetric audio issues
+async function diagnoseAudioIssues() {
+  console.log('🔍 Diagnosing audio issues...');
+  
+  // Check local audio
+  if (localStream) {
+    const audioTracks = localStream.getAudioTracks();
+    console.log(`🎤 Local audio tracks: ${audioTracks.length}`);
+    
+    audioTracks.forEach((track, index) => {
+      console.log(`🎤 Local audio track ${index}:`, {
+        enabled: track.enabled,
+        muted: track.muted,
+        readyState: track.readyState,
+        label: track.label,
+        settings: track.getSettings()
+      });
+    });
+  } else {
+    console.warn('⚠️ No local stream found');
+  }
+  
+  // Check microphone permissions
+  try {
+    const permissions = await navigator.permissions.query({ name: 'microphone' });
+    console.log(`🎤 Microphone permission: ${permissions.state}`);
+  } catch (error) {
+    console.warn('⚠️ Could not check microphone permissions:', error);
+  }
+  
+  // Check each peer connection
+  peerConnections.forEach((pc, peerId) => {
+    console.log(`🔗 Checking connection to ${peerId}:`);
+    
+    // Check outbound audio
+    const audioSenders = pc.getSenders().filter(s => s.track?.kind === 'audio');
+    console.log(`🎤 Audio senders to ${peerId}: ${audioSenders.length}`);
+    
+    audioSenders.forEach((sender, index) => {
+      if (sender.track) {
+        console.log(`🎤 Audio sender ${index} to ${peerId}:`, {
+          enabled: sender.track.enabled,
+          muted: sender.track.muted,
+          readyState: sender.track.readyState
+        });
+      }
+    });
+    
+    // Check inbound audio
+    const audioReceivers = pc.getReceivers().filter(r => r.track?.kind === 'audio');
+    console.log(`🔊 Audio receivers from ${peerId}: ${audioReceivers.length}`);
+    
+    audioReceivers.forEach((receiver, index) => {
+      if (receiver.track) {
+        console.log(`🔊 Audio receiver ${index} from ${peerId}:`, {
+          enabled: receiver.track.enabled,
+          muted: receiver.track.muted,
+          readyState: receiver.track.readyState
+        });
+      }
+    });
+  });
+  
+  // Check participant audio elements
+  participants.forEach((participant, peerId) => {
+    if (participant.audioElement) {
+      console.log(`🔊 Audio element for ${peerId}:`, {
+        paused: participant.audioElement.paused,
+        muted: participant.audioElement.muted,
+        volume: participant.audioElement.volume,
+        src: participant.audioElement.srcObject ? 'has stream' : 'no stream'
+      });
+    } else {
+      console.warn(`⚠️ No audio element found for ${peerId}`);
+    }
+  });
+}
+
 async function monitorNetworkQuality() {
   // Skip monitoring during initial connection phase
   if (initialConnectionPhase && connectionStartTime && (Date.now() - connectionStartTime) > 10000) {
@@ -678,6 +911,22 @@ function analyzeStats(stats, peerId) {
     audioBitrate: 0,
     videoPacketLoss: 0,
     audioPacketLoss: 0,
+    audioStats: {
+      outbound: {
+        enabled: false,
+        muted: false,
+        packetsSent: 0,
+        bytesSent: 0
+      },
+      inbound: {
+        enabled: false,
+        muted: false,
+        packetsReceived: 0,
+        bytesReceived: 0,
+        packetsLost: 0,
+        jitter: 0
+      }
+    },
     rtt: 0,
     jitter: 0,
     quality: 'HIGH'
@@ -707,6 +956,21 @@ function analyzeStats(stats, peerId) {
     metrics.audioBitrate = (bytesDelta * 8) / timeDelta;
     
     const packetsDelta = outboundAudio.packetsSent - previousStats.outboundAudio.packetsSent;
+    
+    // Audio outbound stats for asymmetric debugging
+    metrics.audioStats.outbound = {
+      enabled: true,
+      muted: false,
+      packetsSent: outboundAudio.packetsSent,
+      bytesSent: outboundAudio.bytesSent,
+      bitrate: metrics.audioBitrate
+    };
+    
+    console.log(`🎤 Audio outbound to ${peerId}:`, {
+      bitrate: Math.round(metrics.audioBitrate),
+      packetsSent: outboundAudio.packetsSent,
+      bytesSent: outboundAudio.bytesSent
+    });
     const packetsLostDelta = (outboundAudio.packetsLost || 0) - (previousStats.outboundAudio.packetsLost || 0);
     
     // Be more careful with packet loss calculation
@@ -715,6 +979,25 @@ function analyzeStats(stats, peerId) {
     } else {
       metrics.audioPacketLoss = 0;
     }
+  }
+  
+  // Calculate inbound audio metrics for asymmetric debugging
+  if (inboundAudio) {
+    metrics.audioStats.inbound = {
+      enabled: true,
+      muted: false,
+      packetsReceived: inboundAudio.packetsReceived || 0,
+      bytesReceived: inboundAudio.bytesReceived || 0,
+      packetsLost: inboundAudio.packetsLost || 0,
+      jitter: inboundAudio.jitter || 0
+    };
+    
+    console.log(`🔊 Audio inbound from ${peerId}:`, {
+      packetsReceived: inboundAudio.packetsReceived || 0,
+      bytesReceived: inboundAudio.bytesReceived || 0,
+      packetsLost: inboundAudio.packetsLost || 0,
+      jitter: inboundAudio.jitter || 0
+    });
   }
   
   // Try to get RTT from multiple sources
@@ -1254,15 +1537,38 @@ function createPeerConnection(participantId) {
   
   const pc = new RTCPeerConnection({
     iceServers: [
+      // STUN servers for NAT discovery
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
       { urls: 'stun:stun2.l.google.com:19302' },
       { urls: 'stun:stun.services.mozilla.com' },
       { urls: 'stun:stun.stunprotocol.org:3478' },
-      { urls: 'stun:openrelay.metered.ca:80' }
+      
+      // Free TURN servers for long-distance connections (400km+)
+      {
+        urls: 'turn:openrelay.metered.ca:80',
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
+      },
+      {
+        urls: 'turn:openrelay.metered.ca:443',
+        username: 'openrelayproject', 
+        credential: 'openrelayproject'
+      },
+      {
+        urls: 'turn:openrelay.metered.ca:80?transport=tcp',
+        username: 'openrelayproject',
+        credential: 'openrelayproject'  
+      },
+      // Alternative free TURN server
+      {
+        urls: 'turn:relay1.expressturn.com:3478',
+        username: 'efSLANXAY9TzMa3crbhd',
+        credential: 'StkKGS6j18fnddAdH7W7'
+      }
     ],
     iceCandidatePoolSize: 10,
-    iceTransportPolicy: 'all',
+    iceTransportPolicy: 'all', // Allow both STUN and TURN
     bundlePolicy: 'max-bundle',
     rtcpMuxPolicy: 'require'
   });
@@ -1311,6 +1617,24 @@ function createPeerConnection(participantId) {
     const iceState = pc.iceConnectionState;
     console.log(`🧊 ICE connection with ${participantId}: ${iceState}`);
     
+    // Log connection type for long-distance debugging
+    if (iceState === 'connected' || iceState === 'completed') {
+      pc.getStats().then(stats => {
+        stats.forEach(report => {
+          if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+            const localCandidate = [...stats.values()].find(s => s.id === report.localCandidateId);
+            const remoteCandidate = [...stats.values()].find(s => s.id === report.remoteCandidateId);
+            
+            if (localCandidate?.candidateType === 'relay' || remoteCandidate?.candidateType === 'relay') {
+              console.log(`🔄 Connected to ${participantId} via TURN relay (long-distance mode)`);
+            } else {
+              console.log(`⚡ Connected to ${participantId} via direct P2P`);
+            }
+          }
+        });
+      });
+    }
+    
     if (iceState === 'failed') {
       console.log(`❌ ICE connection failed with ${participantId}, attempting restart`);
       pc.restartIce();
@@ -1322,10 +1646,43 @@ function createPeerConnection(participantId) {
   };
 
   pc.ontrack = (event) => {
-    console.log(`📹 Received track from ${participantId}`);
+    const track = event.track;
+    const stream = event.streams[0];
+    console.log(`📹 Received ${track.kind} track from ${participantId} - Enabled: ${track.enabled}, ReadyState: ${track.readyState}`);
+    
+    // Audio-specific debugging for asymmetric issues
+    if (track.kind === 'audio') {
+      console.log(`🔊 Incoming audio from ${participantId}:`, {
+        enabled: track.enabled,
+        muted: track.muted,
+        readyState: track.readyState,
+        settings: track.getSettings()
+      });
+      
+      // Monitor audio track events
+      track.onended = () => console.warn(`⚠️ Audio track from ${participantId} ended`);
+      track.onmute = () => console.warn(`⚠️ Audio track from ${participantId} muted`);
+      track.onunmute = () => console.log(`✅ Audio track from ${participantId} unmuted`);
+    }
+    
     const participant = participants.get(participantId);
     if (participant) {
-      participant.setStream(event.streams[0]);
+      participant.setStream(stream);
+      
+      // Verify audio is actually playing
+      if (track.kind === 'audio') {
+        setTimeout(() => {
+          const audioElement = participant.audioElement;
+          if (audioElement) {
+            console.log(`🔊 Audio element for ${participantId}:`, {
+              paused: audioElement.paused,
+              muted: audioElement.muted,
+              volume: audioElement.volume,
+              currentTime: audioElement.currentTime
+            });
+          }
+        }, 1000);
+      }
     }
   };
 
@@ -1418,9 +1775,31 @@ joinBtn.onclick = async () => {
       audio: {
         echoCancellation: true,
         noiseSuppression: true,
-        autoGainControl: true
+        autoGainControl: true,
+        sampleRate: 48000,          // Higher sample rate for better quality
+        channelCount: 1,            // Mono to save bandwidth
+        sampleSize: 16,             // 16-bit audio
+        latency: 0.01,              // Low latency for real-time
+        volume: 1.0                 // Full volume
       }
     });
+
+    // Audio debugging for asymmetric issues
+    const audioTrack = localStream.getAudioTracks()[0];
+    if (audioTrack) {
+      console.log('🎤 Audio track settings:', audioTrack.getSettings());
+      console.log('🎤 Audio track constraints:', audioTrack.getConstraints());
+      console.log('🎤 Audio track enabled:', audioTrack.enabled);
+      console.log('🎤 Audio track muted:', audioTrack.muted);
+      console.log('🎤 Audio track ready state:', audioTrack.readyState);
+      
+      // Monitor audio track state changes
+      audioTrack.onended = () => console.warn('⚠️ Audio track ended unexpectedly');
+      audioTrack.onmute = () => console.warn('⚠️ Audio track muted');
+      audioTrack.onunmute = () => console.log('✅ Audio track unmuted');
+    } else {
+      console.error('❌ No audio track found in local stream');
+    }
     
     console.log('🎥 Got local stream');
     
@@ -1458,8 +1837,16 @@ joinBtn.onclick = async () => {
 };
 
 // Leave the meeting
-leaveBtn.onclick = () => {
+leaveBtn.onclick = () => {    
   console.log('👋 Leaving meeting...');
+  
+  // Stop screen sharing if active
+  if (isScreenSharing) {
+    isScreenSharing = false;
+    shareBtn.textContent = '🖥️';
+    shareBtn.className = 'control-btn';
+    shareBtn.title = 'Share Screen';
+  }
   
   // Stop network monitoring
   if (networkMonitoringInterval) {
@@ -1548,6 +1935,15 @@ cameraBtn.onclick = () => {
         }
       }
     }
+  }
+};
+
+// Toggle screen sharing
+shareBtn.onclick = async () => {
+  if (!isScreenSharing) {
+    await startScreenShare();
+  } else {
+    await stopScreenShare();
   }
 };
 
@@ -1647,9 +2043,25 @@ async function createOfferFor(peerId) {
   
   if (localStream) {
     localStream.getTracks().forEach(track => {
-      console.log(`Adding ${track.kind} track to ${peerId}`);
+      console.log(`Adding ${track.kind} track to ${peerId} - Enabled: ${track.enabled}, ReadyState: ${track.readyState}`);
+      if (track.kind === 'audio') {
+        console.log(`🎤 Audio track settings for ${peerId}:`, track.getSettings());
+      }
       pc.addTrack(track, localStream);
     });
+    
+    // Debug outbound audio after adding tracks
+    setTimeout(() => {
+      pc.getSenders().forEach(sender => {
+        if (sender.track?.kind === 'audio') {
+          console.log(`🔊 Audio sender to ${peerId}:`, {
+            trackEnabled: sender.track.enabled,
+            trackMuted: sender.track.muted,
+            trackReadyState: sender.track.readyState
+          });
+        }
+      });
+    }, 1000);
   }
 
   try {
@@ -1851,3 +2263,17 @@ function removeNetworkIndicators() {
 
 // Update stats periodically
 setInterval(updateStats, 2000);
+
+// Add audio diagnosis to window for console access
+window.diagnoseAudioIssues = diagnoseAudioIssues;
+
+// Add keyboard shortcut for audio diagnosis (Ctrl+Alt+D)
+document.addEventListener('keydown', (event) => {
+  if (event.ctrlKey && event.altKey && event.key === 'd') {
+    event.preventDefault();
+    console.log('🎯 Manual audio diagnosis triggered');
+    diagnoseAudioIssues();
+  }
+});
+
+console.log('🎯 Audio diagnosis available: Press Ctrl+Alt+D or run diagnoseAudioIssues() in console');

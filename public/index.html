@@ -235,6 +235,20 @@
     .activity-status.slept { background: rgba(220,53,69,0.8); }
     .activity-status.unknown { background: rgba(108,117,125,0.8); }
     .activity-status.gone { background: rgba(156,39,176,0.8); }
+
+    .share-indicator {
+      position: absolute;
+      top: 50px; /* Below activity status */
+      left: 10px;
+      background: rgba(52,168,83,0.9);
+      padding: 6px 10px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #fff;
+      backdrop-filter: blur(4px);
+      z-index: 10;
+    }
     
     .local-participant { 
       box-shadow: 0 0 0 3px rgba(76,175,80,0.12) inset; 
@@ -295,6 +309,12 @@
     .control-btn.leave, .control-btn.muted { 
       background: linear-gradient(90deg,#f44336,#ff6b5f); 
     }
+
+    .control-btn.sharing {
+      background: linear-gradient(90deg, #34a853, #4caf50);
+      color: white;
+      box-shadow: 0 0 10px rgba(52, 168, 83, 0.5);
+    }
     
     .stats-panel {
       position: fixed;
@@ -345,6 +365,9 @@
     </button>
     <button class="control-btn" id="cameraBtn" title="Toggle Camera">
       📹
+    </button>
+    <button class="control-btn" id="shareBtn" title="Share Screen">
+      🖥️
     </button>
     <button class="control-btn leave" id="leaveBtn" title="Leave Meeting">
       📞

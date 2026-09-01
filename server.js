@@ -5,6 +5,7 @@ const { WebSocketServer } = require("ws");
 const http = require("http");
 const https = require("https");
 const os = require("os");
+const path = require("path");
 const crypto = require("crypto");
 const selfsigned = require("selfsigned");
 
@@ -174,7 +175,7 @@ app.get("/api/turn-credentials", async (req, res) => {
   }
 });
 
-app.use(express.static("public"));
+app.use(express.static(path.join(__dirname, "public")));
 
 const PORT = 3000;
 

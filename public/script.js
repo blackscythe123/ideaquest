@@ -12,6 +12,27 @@ let originalCameraStream = null; // Store original camera stream for reverting
 const participants = new Map(); // Store participant data
 const peerConnections = new Map(); // Store WebRTC connections
 
+// ICE servers - populated from /api/turn-credentials before joining; falls
+// back to STUN-only (no TURN relay) if that fetch fails.
+let iceServers = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' }
+];
+
+async function fetchIceServers() {
+  try {
+    const response = await fetch('/api/turn-credentials');
+    if (!response.ok) throw new Error(`Status ${response.status}`);
+    const data = await response.json();
+    if (Array.isArray(data.iceServers) && data.iceServers.length > 0) {
+      iceServers = data.iceServers;
+      console.log('🧊 Loaded TURN/STUN credentials from server');
+    }
+  } catch (error) {
+    console.warn('⚠️ Could not fetch TURN credentials, falling back to STUN-only:', error);
+  }
+}
+
 // Network adaptation state
 const networkStats = new Map(); // Store per-peer network statistics
 const BANDWIDTH_THRESHOLDS = {
@@ -1536,37 +1557,7 @@ function createPeerConnection(participantId) {
   console.log(`📡 Creating peer connection for ${participantId}`);
   
   const pc = new RTCPeerConnection({
-    iceServers: [
-      // STUN servers for NAT discovery
-      { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' },
-      { urls: 'stun:stun2.l.google.com:19302' },
-      { urls: 'stun:stun.services.mozilla.com' },
-      { urls: 'stun:stun.stunprotocol.org:3478' },
-      
-      // Free TURN servers for long-distance connections (400km+)
-      {
-        urls: 'turn:openrelay.metered.ca:80',
-        username: 'openrelayproject',
-        credential: 'openrelayproject'
-      },
-      {
-        urls: 'turn:openrelay.metered.ca:443',
-        username: 'openrelayproject', 
-        credential: 'openrelayproject'
-      },
-      {
-        urls: 'turn:openrelay.metered.ca:80?transport=tcp',
-        username: 'openrelayproject',
-        credential: 'openrelayproject'  
-      },
-      // Alternative free TURN server
-      {
-        urls: 'turn:relay1.expressturn.com:3478',
-        username: 'efSLANXAY9TzMa3crbhd',
-        credential: 'StkKGS6j18fnddAdH7W7'
-      }
-    ],
+    iceServers,
     iceCandidatePoolSize: 10,
     iceTransportPolicy: 'all', // Allow both STUN and TURN
     bundlePolicy: 'max-bundle',
@@ -1764,7 +1755,9 @@ function createPeerConnection(participantId) {
 joinBtn.onclick = async () => {
   try {
     console.log('🚀 Joining meeting...');
-    
+
+    await fetchIceServers();
+
     // Get user media with initial high quality settings
     localStream = await navigator.mediaDevices.getUserMedia({
       video: {

@@ -2,6 +2,7 @@ require("dotenv").config();
 
 const express = require("express");
 const { WebSocketServer } = require("ws");
+const http = require("http");
 const https = require("https");
 const os = require("os");
 const crypto = require("crypto");
@@ -215,23 +216,31 @@ async function createHttpsServer(lanAddresses) {
   return https.createServer({ key: pems.private, cert: pems.cert }, app);
 }
 
-async function start() {
-  const lanAddresses = getLanAddresses();
-  const server = await createHttpsServer(lanAddresses);
-  const wss = new WebSocketServer({ server });
+if (process.env.VERCEL) {
+  // Vercel Functions require the module to export a server/app instead of
+  // calling .listen() itself - it terminates TLS with a real certificate
+  // and routes requests to whatever is exported, so the self-signed HTTPS
+  // wrapper above is only relevant for local/LAN dev, never here.
+  const server = http.createServer(app);
+  new WebSocketServer({ server }).on("connection", handleConnection);
+  module.exports = server;
+} else {
+  (async function start() {
+    const lanAddresses = getLanAddresses();
+    const server = await createHttpsServer(lanAddresses);
+    const wss = new WebSocketServer({ server });
 
-  wss.on("connection", handleConnection);
+    wss.on("connection", handleConnection);
 
-  server.listen(PORT, "0.0.0.0", () => {
-    console.log("🚀 Server running on (HTTPS, self-signed certificate):");
-    console.log(`   Local:   https://localhost:${PORT}`);
-    for (const ip of lanAddresses) {
-      console.log(`   Network: https://${ip}:${PORT}`);
-    }
-    console.log("");
-    console.log("⚠️  Your browser will warn that the certificate isn't trusted (self-signed).");
-    console.log("   Click Advanced -> Proceed, once per device, to continue - this is expected for local dev.");
-  });
+    server.listen(PORT, "0.0.0.0", () => {
+      console.log("🚀 Server running on (HTTPS, self-signed certificate):");
+      console.log(`   Local:   https://localhost:${PORT}`);
+      for (const ip of lanAddresses) {
+        console.log(`   Network: https://${ip}:${PORT}`);
+      }
+      console.log("");
+      console.log("⚠️  Your browser will warn that the certificate isn't trusted (self-signed).");
+      console.log("   Click Advanced -> Proceed, once per device, to continue - this is expected for local dev.");
+    });
+  })();
 }
-
-start();

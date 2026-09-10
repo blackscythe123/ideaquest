@@ -1,3 +1,7 @@
 node_modules/*
 .env
 .DS_Store
+report/*.aux
+report/*.log
+report/*.out
+report/*.toc
